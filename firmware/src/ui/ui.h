@@ -25,6 +25,7 @@ struct Callbacks {
   void (*setDemo)(bool on) = nullptr;
   void (*setNightMode)(int mode) = nullptr;  // -1 auto, 0 day, 1 night
   void (*calibrateMounting)() = nullptr;
+  void (*calibrateAccel)() = nullptr;  // sphere-fit offsets, the user turns the device
   void (*resetTrip)() = nullptr;
   void (*resetPeaks)() = nullptr;
   void (*clearRecords)() = nullptr;

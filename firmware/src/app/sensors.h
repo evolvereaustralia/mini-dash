@@ -28,6 +28,13 @@ void calibrateMounting();
 bool mountingRef(float out[3]);
 void setMountingRef(const float ref[3]);
 
+// Accelerometer offset calibration (docs/calibration.md): start collecting while the user
+// turns the device; the sensor task finishes it on its own. accelCalTake returns true once
+// when a result is ready (ok says whether it was applied) so the caller can persist it.
+void startAccelCal();
+bool accelCalTake(bool *ok, float offset[3], float *radius, float *rmsResidual, int *directions);
+void setAccelCal(const float offset[3], float radius);
+
 // Night mode override: -1 auto (lux), 0 day, 1 night. Brightness 0..100 when not auto.
 void setNightMode(int mode);
 void setBrightness(uint8_t percent);

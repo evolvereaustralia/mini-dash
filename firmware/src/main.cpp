@@ -6,6 +6,7 @@
 // RGB565, decode with tools/screenshot.py), n = next tab, D R Y E B = a page, x = settings, i = I2C scan, r = reboot.
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <string.h>
 #include <LittleFS.h>
 
@@ -109,6 +110,21 @@ void saveSettings(const Ui::UiSettings &u) {
   g_settings.calibrated = Sensors::mountingRef(g_settings.gRef);
   Storage::saveSettings(g_settings);
 }
+
+// The accelerometer offset calibration finishes inside the sensor task; store its result.
+void pollAccelCal() {
+  bool ok;
+  float off[3], radius, res;
+  int dirs;
+  if (!Sensors::accelCalTake(&ok, off, &radius, &res, &dirs)) return;
+  if (!ok) return;
+  for (int i = 0; i < 3; i++) g_settings.accOffset[i] = off[i];
+  g_settings.accRadius = radius;
+  g_settings.accCalibrated = true;
+  Storage::saveSettings(g_settings);
+  Serial.println("accel cal: stored");
+}
+void uiCalibrateAccel() { Sensors::startAccelCal(); }
 
 // Flash writes and the panel. While the chip writes flash it cannot fetch code or constants
 // from flash, and on the prebuilt Arduino core the PSRAM cache goes down with it, so the
@@ -308,6 +324,17 @@ void handleSerial() {
       size_t n = I2cBus::scan(found, sizeof(found));
       Serial.printf("I2C: %u devices:", (unsigned)n);
       for (size_t i = 0; i < n; i++) Serial.printf(" 0x%02X", found[i]);
+      {  // raw WHO_AM_I of the IMU (0x0F, expect 0x6B) for the start-up failure of 25 Oct 2026
+        I2cLock lk(50, "whoami");
+        if (lk.ok()) {
+          Wire.beginTransmission(I2C_ADDR_ISM330DHCX);
+          Wire.write(0x0F);
+          uint8_t e = Wire.endTransmission(false);
+          uint8_t got = Wire.requestFrom(I2C_ADDR_ISM330DHCX, (uint8_t)1);
+          int v = got ? Wire.read() : -1;
+          Serial.printf(" | IMU WHO_AM_I: write %u, read %u bytes, value 0x%02X", e, got, v & 0xFF);
+        }
+      }
       Serial.println();
     } else if (ch == 'n' || ch == 'x') {
       LvLock lk;
@@ -355,6 +382,8 @@ void handleSerial() {
       tlog = !tlog;
       TouchGt911::setLogging(tlog);
       Serial.printf("touch logging %s\n", tlog ? "on" : "off");
+    } else if (ch == 'c') {  // accelerometer offset calibration, as the Settings button
+      Sensors::startAccelCal();
     } else if (ch == 'g') {  // 10 Hz readout of the motion path, for hand tests of the attitude filter
       g_motionLog = !g_motionLog;
       Serial.printf("motion log %s\n", g_motionLog ? "on: t,lat,lon,yaw,tilt,corr,bias,kph,trust,still,|a|,|w|,rest|a|" : "off");
@@ -419,6 +448,7 @@ void setup() {
     cb.setDemo = uiSetDemo;
     cb.setNightMode = uiSetNight;
     cb.calibrateMounting = uiCalibrate;
+    cb.calibrateAccel = uiCalibrateAccel;
     cb.resetTrip = uiResetTrip;
     cb.resetPeaks = uiResetPeaks;
     cb.clearRecords = uiClearRecords;
@@ -457,6 +487,7 @@ void setup() {
     LvLock lk;
     Ui::applySettings(us);
   }
+  if (g_settings.accCalibrated) Sensors::setAccelCal(g_settings.accOffset, g_settings.accRadius);
   if (g_settings.calibrated) Sensors::setMountingRef(g_settings.gRef);
   Storage::TripSummary leftover;
   if (Storage::loadActive(leftover)) {
@@ -516,6 +547,7 @@ void loop() {
       if (stillLongEnough || overdue || g_immediateWrites) flushDeferredWrites(overdue);
     }
   }
+  pollAccelCal();
   static uint32_t lastMotion = 0;
   if (g_motionLog && millis() - lastMotion >= 100) {
     lastMotion = millis();

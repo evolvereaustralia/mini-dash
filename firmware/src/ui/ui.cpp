@@ -831,7 +831,7 @@ void updateBattery() {
 // ---- Settings ----------------------------------------------------------------------------
 struct {
   Segmented night, demo, units;
-  lv_obj_t *calib = nullptr, *calibL = nullptr, *diag = nullptr, *about = nullptr, *bright = nullptr, *dongle = nullptr;
+  lv_obj_t *calib = nullptr, *calibL = nullptr, *accelCal = nullptr, *accelCalL = nullptr, *diag = nullptr, *about = nullptr, *bright = nullptr, *dongle = nullptr;
 } G;
 void nightCb(lv_event_t *e) {
   int i = (int)(intptr_t)lv_event_get_user_data(e);
@@ -857,6 +857,11 @@ void calibCb(lv_event_t *) {
   if (g_cb.calibrateMounting) g_cb.calibrateMounting();
   setText(G.calibL, "Taken");
 }
+void accelCalCb(lv_event_t *) {
+  if (g_vs.diag.accCalState == 1) return;  // already collecting
+  if (g_cb.calibrateAccel) g_cb.calibrateAccel();
+  setText(G.accelCalL, "Turn it");
+}
 void resetTripCb(lv_event_t *) {
   if (g_cb.resetTrip) g_cb.resetTrip();
   D.plot.resetHistory();
@@ -881,9 +886,11 @@ void buildSettings(lv_obj_t *p) {
   static const char *NIGHT[3] = {"Auto", "On", "Off"};
   static const char *DEMO[2] = {"Off", "Replay"};
   static const char *UNITS[2] = {"km/h", "mph"};
-  settingRow(p, 0, 0, "IMU mounting calibration");
-  G.calib = button(p, 300, srowY(0) + 8, 86, 34, "Take now", &inter_rg_14, LIME, PANEL, calibCb, nullptr);
+  settingRow(p, 0, 0, "IMU calibration");
+  G.calib = button(p, 206, srowY(0) + 8, 86, 34, "Mounting", &inter_rg_14, LIME, PANEL, calibCb, nullptr);
   G.calibL = buttonLabel(G.calib);
+  G.accelCal = button(p, 300, srowY(0) + 8, 86, 34, "Offsets", &inter_rg_14, LIME, PANEL, accelCalCb, nullptr);
+  G.accelCalL = buttonLabel(G.accelCal);
   settingRow(p, 0, 1, "Units");
   G.units = segmented(p, 246, srowY(1) + 8, 68, 34, UNITS, 2, unitsCb, &inter_rg_14);
   G.units.select(g_units_mph ? 1 : 0);
@@ -916,6 +923,11 @@ void buildSettings(lv_obj_t *p) {
   G.about = rowValue(p, 1, 6, "");
 }
 void updateSettings() {
+  static uint8_t lastCal = 255;
+  uint8_t cal = g_vs.diag.accCalState;
+  if (cal == 1) setTextF(G.accelCalL, "Turn %d/%d", g_vs.diag.accCalDirs, 10);
+  else if (cal != lastCal) setText(G.accelCalL, cal == 2 ? "Done" : (cal == 3 ? "Failed" : (g_vs.diag.accCalibrated ? "Done" : "Offsets")));
+  lastCal = cal;
   setTextF(G.diag, "GPS %d · IMU %.0f Hz · I2C %lu ms", g_vs.gps.sats, g_vs.imu.rateHz,
            (unsigned long)g_vs.diag.i2cLongestHoldMs);
   setTextF(G.bright, "%s · %u %%", g_nightMode == -1 ? "Auto" : "Manual", g_vs.disp.backlightPct);

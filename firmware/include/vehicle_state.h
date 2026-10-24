@@ -115,6 +115,9 @@ struct Diagnostics {
   float attTiltDeg = 0, attCorrDeg = 0, gyroBiasDps = 0, lonBiasG = 0;
   bool attTrust = false, attStationary = false;
   float accNorm = 1, gyrNorm = 0, restNorm = 1;  // gate inputs: |a| g, bias-corrected |w| deg/s, learnt |a| at rest
+  // Accelerometer offset calibration: 0 idle, 1 collecting, 2 done, 3 failed; directions stored.
+  uint8_t accCalState = 0, accCalDirs = 0;
+  bool accCalibrated = false;
 };
 
 // What the storage layer knows, for the Trip scopes and the Settings page.

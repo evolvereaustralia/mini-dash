@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "../../src/app/accel_cal.h"
 #include "../../src/app/attitude.h"
 #include "../../src/app/speed_fusion.h"
 
@@ -46,6 +47,30 @@ int main() {
 #endif
   const float accelOffset[3] = {0.020f, -0.030f, 0.040f};  // zero-g offsets, datasheet typical
   const float accelScale[3] = {1.00f, 0.99f, 1.015f};        // sensitivity tolerance
+
+  // --- Offset calibration first: the user turns the device through ten orientations, two
+  // seconds each, with the sensor's offsets, scale and noise; the fit must recover the offsets.
+  AccelCal cal;
+  cal.start();
+  {
+    const float dirs[10][3] = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0},
+                               {0.7f, 0.7f, 0}, {-0.7f, 0, 0.7f}, {0, -0.7f, -0.7f}, {0.6f, -0.6f, 0.5f}};
+    for (int d = 0; d < 10; d++) {
+      float n = sqrtf(dirs[d][0] * dirs[d][0] + dirs[d][1] * dirs[d][1] + dirs[d][2] * dirs[d][2]);
+      for (int k = 0; k < 416; k++) {  // 2 s, the first 0.3 s "moving"
+        float a[3];
+        for (int i = 0; i < 3; i++) a[i] = dirs[d][i] / n * accelScale[i] + accelOffset[i] + 0.004f * frand();
+        cal.feed(a, k > 60);
+      }
+    }
+  }
+  AccelCal::Result cr;
+  bool calOk = cal.finish(cr);
+  printf("calibration: %s, %d directions, offset %+.4f %+.4f %+.4f (true %+.3f %+.3f %+.3f), radius %.4f, residual %.4f g\n",
+         calOk ? "ok" : "FAILED", cr.directions, cr.offset[0], cr.offset[1], cr.offset[2], accelOffset[0], accelOffset[1], accelOffset[2],
+         cr.radius, cr.rmsResidual);
+  int calFail = !calOk;
+  for (int i = 0; i < 3; i++) if (fabsf(cr.offset[i] - accelOffset[i]) > 0.006f) calFail = 1;
 
   Attitude att;
   SpeedFusion fus;
@@ -97,7 +122,7 @@ int main() {
     apply(S_from_V, wV, wS);
     float a[3], w[3];
     for (int i = 0; i < 3; i++) {
-      a[i] = fS[i] * accelScale[i] + accelOffset[i] + 0.004f * frand();
+      a[i] = (fS[i] * accelScale[i] + accelOffset[i] + 0.004f * frand() - cr.offset[i]) / cr.radius;  // as the firmware corrects it
       w[i] = wS[i] + bias[i] + 0.15f * frand();
     }
 
@@ -170,10 +195,8 @@ int main() {
   printf("trust at rest after the drive: %.0f percent of samples (rest |a| learnt %.3f g)\n", 100.0 * nTrustRest / nRest, att.restNorm());
   int fail = 0;
   if (nTrustRest < 0.9 * nRest) { printf("FAIL: gravity not trusted at rest\n"); fail = 1; }
-  // The lateral bound is 0.05 g until the accelerometer offsets are calibrated (sphere fit): an
-  // offset absorbed into the up direction swings with yaw, and the 65 degree corner here costs
-  // 0.04 g rms with the datasheet-typical 20 to 40 mg offsets. Tighten to 0.02 g with the fit.
-  if (rmsLon > 0.02 || rmsLat > 0.05) { printf("FAIL: G error during manoeuvres over bound\n"); fail = 1; }
+  if (calFail) { printf("FAIL: offset calibration off by more than 6 mg\n"); fail = 1; }
+  if (rmsLon > 0.02 || rmsLat > 0.02) { printf("FAIL: G error during manoeuvres over 0.02 g\n"); fail = 1; }
   if (fabs(restLon / nRest) > 0.01 || fabs(restLat / nRest) > 0.01) { printf("FAIL: G at rest after the drive over 0.01 g\n"); fail = 1; }
   if (rmsV > 0.3 || errVMax > 1.0) { printf("FAIL: speed error over 0.3 m/s rms or 1.0 m/s peak\n"); fail = 1; }
   printf(fail ? "RESULT: FAIL\n" : "RESULT: PASS\n");

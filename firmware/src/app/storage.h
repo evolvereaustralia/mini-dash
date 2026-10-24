@@ -16,7 +16,7 @@ constexpr int MAX_TRIPS = 60;
 constexpr uint32_t CHECKPOINT_MS = 30000;
 
 struct Settings {
-  uint8_t version = 1;
+  uint8_t version = 2;  // 2: accelerometer offset calibration added (25 Oct 2026)
   bool mph = false;
   int8_t nightMode = -1;  // -1 auto, 0 day, 1 night
   uint8_t brightness = 100;
@@ -25,6 +25,9 @@ struct Settings {
   bool demo = true;
   bool calibrated = false;
   float gRef[3] = {0, 0, 1};
+  bool accCalibrated = false;       // sphere-fit offsets taken (docs/calibration.md)
+  float accOffset[3] = {0, 0, 0};   // g, subtracted from every raw sample
+  float accRadius = 1;              // g, the raw magnitude at rest; samples are divided by it
 };
 
 // One completed (or checkpointed) trip. Plain data, written as one block with a header.

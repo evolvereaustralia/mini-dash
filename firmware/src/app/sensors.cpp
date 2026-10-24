@@ -7,6 +7,7 @@
 #include <Wire.h>
 #include <math.h>
 
+#include "accel_cal.h"
 #include "attitude.h"
 #include "board_config.h"
 #include "clock.h"
@@ -52,6 +53,14 @@ volatile bool g_calibrateRequest = false;
 
 Attitude g_att;
 SpeedFusion g_fusion;
+AccelCal g_accelCal;
+float g_accOff[3] = {0, 0, 0}, g_accRadius = 1.0f;
+bool g_accCalibrated = false;
+uint32_t g_accelCalStartMs = 0;
+volatile bool g_accelCalRequest = false;
+bool g_accelCalResultReady = false, g_accelCalResultOk = false;
+AccelCal::Result g_accelCalResult;
+uint8_t g_accCalState = 0;
 uint32_t g_lastImuUs = 0, g_attStartMs = 0;
 // Last GPS ground speed and a 1 s history, for the "steady motion" and standstill decisions.
 float g_gpsSpeed = 0, g_gpsSpeedHist[10] = {};
@@ -85,14 +94,31 @@ bool gpsBegin() {
 }
 
 bool imuBegin() {
-  I2cLock guard(200, "imu.begin");
-  if (!guard.ok() || !g_imu.begin(Wire, I2C_ADDR_ISM330DHCX)) return false;
-  g_imu.deviceReset();
-  uint32_t t0 = millis();
-  while (!g_imu.getDeviceReset()) {
-    if (millis() - t0 > 100) return false;
-    delay(1);
+  I2cLock guard(400, "imu.begin");
+  if (!guard.ok()) return false;
+  // Three attempts: on 25 Oct 2026 the part answered the bus scan but failed begin() on two
+  // boots in a row after its cable had been disturbed; the step that fails is logged.
+  bool up = false;
+  for (int attempt = 0; attempt < 3 && !up; attempt++) {
+    if (attempt) delay(30);
+    if (!g_imu.begin(Wire, I2C_ADDR_ISM330DHCX)) {
+      Serial.printf("IMU: begin (WHO_AM_I) failed, attempt %d\n", attempt + 1);
+      continue;
+    }
+    g_imu.deviceReset();
+    uint32_t t0 = millis();
+    bool reset = false;
+    while (millis() - t0 < 100) {
+      if (g_imu.getDeviceReset()) { reset = true; break; }
+      delay(1);
+    }
+    if (!reset) {
+      Serial.printf("IMU: software reset did not complete, attempt %d\n", attempt + 1);
+      continue;
+    }
+    up = true;
   }
+  if (!up) return false;
   g_imu.setDeviceConfig();
   g_imu.setBlockDataUpdate();
   g_imu.setAccelDataRate(ISM_XL_ODR_208Hz);
@@ -198,7 +224,8 @@ void pollImu(uint32_t now) {
   uint32_t us = micros();
   float dt = g_lastImuUs ? (float)(us - g_lastImuUs) * 1e-6f : 1.0f / IMU_ODR_HZ;
   g_lastImuUs = us;
-  float acc[3] = {a.xData / 1000.0f, a.yData / 1000.0f, a.zData / 1000.0f};
+  float raw[3] = {a.xData / 1000.0f, a.yData / 1000.0f, a.zData / 1000.0f};
+  float acc[3] = {(raw[0] - g_accOff[0]) / g_accRadius, (raw[1] - g_accOff[1]) / g_accRadius, (raw[2] - g_accOff[2]) / g_accRadius};
   float gyr[3] = {w.xData / 1000.0f, w.yData / 1000.0f, w.zData / 1000.0f};
   if (g_calibrateRequest) {
     float n = sqrtf(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
@@ -211,6 +238,50 @@ void pollImu(uint32_t now) {
     g_calibrateRequest = false;
   }
   if (!g_att.ready()) g_att.reset(g_calibrated ? g_gRef : acc);
+
+  // Offset calibration: raw samples, collected while the gyro is quiet, until ten directions
+  // or 60 s; the fit applies at once and the result waits for main to store it.
+  if (g_accelCalRequest) {
+    g_accelCalRequest = false;
+    g_accelCal.start();
+    g_accelCalStartMs = now;
+    g_accCalState = 1;
+    Serial.println("accel cal: turn the device slowly through flat, upside down and its four edges");
+  }
+  if (g_accelCal.active()) {
+    float bq[3];
+    g_att.gyroBias(bq);
+    float wq = sqrtf((gyr[0] - bq[0]) * (gyr[0] - bq[0]) + (gyr[1] - bq[1]) * (gyr[1] - bq[1]) + (gyr[2] - bq[2]) * (gyr[2] - bq[2]));
+    if (g_accelCal.feed(raw, wq < 45.0f)) Serial.printf("accel cal: direction %d stored\n", g_accelCal.directions());
+    static uint32_t lastReport = 0;
+    if (now - lastReport >= 2000) {
+      lastReport = now;
+      Serial.printf("accel cal: %d directions, window spread %.0f mg, gyro %.0f deg/s, %lu s\n", g_accelCal.directions(),
+                    g_accelCal.lastSpreadG() * 1000, wq, (unsigned long)((now - g_accelCalStartMs) / 1000));
+    }
+    bool enough = g_accelCal.directions() >= AccelCal::ENOUGH_DIRS;
+    bool timeUp = now - g_accelCalStartMs > 90000;
+    if (enough || timeUp) {
+      g_accelCalResultOk = g_accelCal.finish(g_accelCalResult);
+      if (g_accelCalResultOk) {
+        for (int i = 0; i < 3; i++) g_accOff[i] = g_accelCalResult.offset[i];
+        g_accRadius = g_accelCalResult.radius;
+        g_accCalibrated = true;
+        for (int i = 0; i < 3; i++) acc[i] = (raw[i] - g_accOff[i]) / g_accRadius;
+        g_att.reset(acc);
+        g_fusion.reset();
+        g_accCalState = 2;
+        Serial.printf("accel cal: done, %d directions, offset %+.1f %+.1f %+.1f mg, radius %.4f g, residual %.1f mg\n",
+                      g_accelCalResult.directions, g_accOff[0] * 1000, g_accOff[1] * 1000, g_accOff[2] * 1000, g_accRadius,
+                      g_accelCalResult.rmsResidual * 1000);
+      } else {
+        g_accCalState = 3;
+        Serial.printf("accel cal: FAILED, %d directions (need %d with each axis seen both ways)\n", g_accelCalResult.directions,
+                      AccelCal::MIN_DIRS);
+      }
+      g_accelCalResultReady = true;
+    }
+  }
 
   // When may the accelerometer serve as the gravity reference? Specific force within 3 percent
   // of 1 g (no linear acceleration, no cornering), gyro rates under 10 deg/s, and the GPS speed
@@ -358,6 +429,9 @@ void sensorTask(void *) {
         vs.diag.lonBiasG = g_fusion.lonBiasG();
         vs.diag.attTrust = g_attTrust;
         vs.diag.attStationary = g_attStationary;
+        vs.diag.accCalState = g_accCalState;
+        vs.diag.accCalDirs = (uint8_t)g_accelCal.directions();
+        vs.diag.accCalibrated = g_accCalibrated;
         vs.diag.accNorm = g_accNorm;
         vs.diag.gyrNorm = g_gyrNorm;
         vs.diag.restNorm = g_att.restNorm();
@@ -400,6 +474,24 @@ void setMountingRef(const float ref[3]) {
   for (int i = 0; i < 3; i++) g_gRef[i] = ref[i];
   g_calibrated = true;
   g_att.reset(g_gRef);
+}
+
+void startAccelCal() { g_accelCalRequest = true; }
+bool accelCalTake(bool *ok, float offset[3], float *radius, float *rmsResidual, int *directions) {
+  if (!g_accelCalResultReady) return false;
+  g_accelCalResultReady = false;
+  *ok = g_accelCalResultOk;
+  for (int i = 0; i < 3; i++) offset[i] = g_accelCalResult.offset[i];
+  *radius = g_accelCalResult.radius;
+  *rmsResidual = g_accelCalResult.rmsResidual;
+  *directions = g_accelCalResult.directions;
+  return true;
+}
+void setAccelCal(const float offset[3], float radius) {
+  for (int i = 0; i < 3; i++) g_accOff[i] = offset[i];
+  g_accRadius = radius > 0.5f && radius < 1.5f ? radius : 1.0f;
+  g_accCalibrated = true;
+  g_accCalState = 2;
 }
 
 void setNightMode(int mode) {
