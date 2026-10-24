@@ -33,6 +33,11 @@ class Attitude {
 
   void up(float out[3]) const;
   void gyroBias(float out[3]) const;
+  // Whether a sample's magnitude is close enough to the magnitude the sensor reports at rest
+  // (learnt while stationary; zero-g offsets and scale error make it 2 to 5 percent off 1 g on
+  // this part, and in some orientations) to be free of linear acceleration: within 3 percent.
+  bool accelPlausible(const float a[3]) const;
+  float restNorm() const { return restNorm_; }
   // Bias-corrected rate about the up axis, deg/s, positive anticlockwise seen from above.
   float yawRateDps(const float w[3]) const;
   // Angle between the sensor's +Z and world up, degrees (diagnostics).
@@ -46,6 +51,7 @@ class Attitude {
   bool ready_;
   float lastCorrDeg_;
   float stationaryS_;  // standstill seen so far, for the bias learning schedule
+  float restNorm_;     // |a| at rest, learnt
 };
 
 // Vehicle-frame G from one specific-force sample (g, sensor frame), the current up and the

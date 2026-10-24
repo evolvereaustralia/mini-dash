@@ -127,6 +127,7 @@ constexpr bool WRITES_STALL_PANEL = false;
 #else
 constexpr bool WRITES_STALL_PANEL = true;
 #endif
+volatile bool g_motionLog = false;
 volatile bool g_suppressWrites = WRITES_STALL_PANEL;    // hold back event traces and checkpoints
 volatile bool g_immediateWrites = !WRITES_STALL_PANEL;  // write at once, ignoring the still rule
 struct PendingEvent {
@@ -354,6 +355,9 @@ void handleSerial() {
       tlog = !tlog;
       TouchGt911::setLogging(tlog);
       Serial.printf("touch logging %s\n", tlog ? "on" : "off");
+    } else if (ch == 'g') {  // 10 Hz readout of the motion path, for hand tests of the attitude filter
+      g_motionLog = !g_motionLog;
+      Serial.printf("motion log %s\n", g_motionLog ? "on: t,lat,lon,yaw,tilt,corr,bias,kph,trust,still,|a|,|w|,rest|a|" : "off");
     } else if (ch == 'Q') {  // dump the stored trace of the trip's 0-60 record as CSV
       static Storage::TraceSample tr[Storage::TRACE_MAX];
       size_t n = 0;
@@ -511,6 +515,15 @@ void loop() {
       bool overdue = g_checkpointDue && !Demo::enabled() && nowMs - g_lastCheckpointWriteMs >= CHECKPOINT_FORCE_MS;
       if (stillLongEnough || overdue || g_immediateWrites) flushDeferredWrites(overdue);
     }
+  }
+  static uint32_t lastMotion = 0;
+  if (g_motionLog && millis() - lastMotion >= 100) {
+    lastMotion = millis();
+    VehicleState vs;
+    Vs::snapshot(vs);
+    Serial.printf("M,%lu,%+.3f,%+.3f,%+.1f,%.1f,%.3f,%.2f,%.1f,%d,%d,%.3f,%.1f,%.3f\n", (unsigned long)millis(), vs.motion.latG,
+                  vs.motion.lonG, vs.motion.yawDps, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps,
+                  vs.disp.speedKph, vs.diag.attTrust, vs.diag.attStationary, vs.diag.accNorm, vs.diag.gyrNorm, vs.diag.restNorm);
   }
   static uint32_t last = 0;
   if (millis() - last >= 5000) {

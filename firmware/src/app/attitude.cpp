@@ -9,6 +9,8 @@ constexpr float BIAS_FAST_FOR_S = 10.0f;  // ...seconds of standstill since boot
 constexpr float BIAS_TAU_S = 20.0f;       // slow tracking of the bias as the part warms
 constexpr float BIAS_KI = 0.05f;          // bias learnt from the gravity error in steady motion, 1/s^2
 constexpr float MAX_BIAS_DPS = 5.0f;
+constexpr float REST_NORM_TAU_S = 5.0f;
+constexpr float PLAUSIBLE_FRAC = 0.03f;
 
 void normalise3(float v[3]) {
   float n = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -45,11 +47,13 @@ void rotateBody(float q[4], const float rv[3]) {
 }
 }  // namespace
 
-Attitude::Attitude() : q_{1, 0, 0, 0}, bias_{0, 0, 0}, ready_(false), lastCorrDeg_(0), stationaryS_(0) {}
+Attitude::Attitude() : q_{1, 0, 0, 0}, bias_{0, 0, 0}, ready_(false), lastCorrDeg_(0), stationaryS_(0), restNorm_(1.0f) {}
 
 void Attitude::reset(const float a[3]) {
   // The shortest rotation taking the measured up (sensor frame) onto world Z.
   float u[3] = {a[0], a[1], a[2]};
+  float n = sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+  if (n > 0.5f && n < 1.5f) restNorm_ = n;
   normalise3(u);
   float d = u[2];  // dot with (0, 0, 1)
   if (d < -0.9999f) {
@@ -87,6 +91,8 @@ void Attitude::update(const float a[3], const float w[3], float dt, bool trustAc
     float k = dt / (stationaryS_ < BIAS_FAST_FOR_S ? BIAS_TAU_FAST_S : BIAS_TAU_S);
     stationaryS_ += dt;
     for (int i = 0; i < 3; i++) bias_[i] += k * (w[i] - bias_[i]);
+    float n = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    if (n > 0.5f && n < 1.5f) restNorm_ += (n - restNorm_) * dt / REST_NORM_TAU_S;
   }
   float rv[3] = {rate[0] * DEG * dt, rate[1] * DEG * dt, rate[2] * DEG * dt};
   lastCorrDeg_ = 0;
@@ -112,6 +118,11 @@ void Attitude::update(const float a[3], const float w[3], float dt, bool trustAc
     if (bias_[i] < -MAX_BIAS_DPS) bias_[i] = -MAX_BIAS_DPS;
   }
   rotateBody(q_, rv);
+}
+
+bool Attitude::accelPlausible(const float a[3]) const {
+  float n = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+  return fabsf(n - restNorm_) < PLAUSIBLE_FRAC * restNorm_;
 }
 
 void Attitude::gyroBias(float out[3]) const {

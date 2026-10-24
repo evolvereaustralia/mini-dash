@@ -114,6 +114,7 @@ struct Diagnostics {
   // zero), the learnt gyro bias magnitude and the longitudinal residual learnt at standstill.
   float attTiltDeg = 0, attCorrDeg = 0, gyroBiasDps = 0, lonBiasG = 0;
   bool attTrust = false, attStationary = false;
+  float accNorm = 1, gyrNorm = 0, restNorm = 1;  // gate inputs: |a| g, bias-corrected |w| deg/s, learnt |a| at rest
 };
 
 // What the storage layer knows, for the Trip scopes and the Settings page.

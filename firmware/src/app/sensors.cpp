@@ -58,6 +58,7 @@ float g_gpsSpeed = 0, g_gpsSpeedHist[10] = {};
 int g_gpsSpeedIdx = 0;
 uint32_t g_gpsSpeedMs = 0;
 bool g_attTrust = false, g_attStationary = false;
+float g_accNorm = 1, g_gyrNorm = 0;
 
 // Display path low-pass state (about 5 Hz at 208 Hz).
 float g_latLp = 0, g_lonLp = 0;
@@ -223,8 +224,11 @@ void pollImu(uint32_t now) {
                    (gyr[2] - bias[2]) * (gyr[2] - bias[2]));
   bool gpsFresh = g_gpsSpeedMs && now - g_gpsSpeedMs < STALE_GPS_MS;
   bool steady = gpsFresh ? fabsf(g_gpsSpeed - g_gpsSpeedHist[g_gpsSpeedIdx]) < 0.4f : true;
-  bool trust = fabsf(an - 1.0f) < 0.03f && wn < 10.0f && steady;
-  bool stationary = (gpsFresh ? g_gpsSpeed < 0.3f : fabsf(an - 1.0f) < 0.02f) && wn < (gpsFresh ? 3.0f : 1.0f);
+  bool plausible = g_att.accelPlausible(acc);
+  bool trust = plausible && wn < 10.0f && steady;
+  bool stationary = (gpsFresh ? g_gpsSpeed < 0.3f : plausible) && wn < (gpsFresh ? 3.0f : 1.0f);
+  g_accNorm = an;
+  g_gyrNorm = wn;
   if (g_attStartMs == 0) g_attStartMs = now;
   float kp = now - g_attStartMs < 3000 ? 2.0f : (stationary ? 1.0f : 0.1f);
   g_att.update(acc, gyr, dt, trust, kp, stationary);
@@ -354,6 +358,9 @@ void sensorTask(void *) {
         vs.diag.lonBiasG = g_fusion.lonBiasG();
         vs.diag.attTrust = g_attTrust;
         vs.diag.attStationary = g_attStationary;
+        vs.diag.accNorm = g_accNorm;
+        vs.diag.gyrNorm = g_gyrNorm;
+        vs.diag.restNorm = g_att.restNorm();
         vs.utcNow = Clock::nowUtc();
         (void)lastPvt;
       }
