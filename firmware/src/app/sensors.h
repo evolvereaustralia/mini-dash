@@ -23,9 +23,16 @@ bool luxOk();
 
 // Take the current gravity vector as the mounting reference (car level and still).
 void calibrateMounting();
+// The stored mounting reference (unit gravity vector in the sensor frame); false if never taken.
+bool mountingRef(float out[3]);
+void setMountingRef(const float ref[3]);
 
 // Night mode override: -1 auto (lux), 0 day, 1 night. Brightness 0..100 when not auto.
 void setNightMode(int mode);
 void setBrightness(uint8_t percent);
+
+// GPS poll diagnostics since the last call: longest poll, the receiver backlog in bytes seen
+// before it, NMEA bytes received in total (should stay 0), and the average poll time.
+void gpsStats(uint32_t *pollMaxMs, uint32_t *backlogAtMax, uint32_t *nmeaBytes, uint32_t *pollAvgMs);
 
 }  // namespace Sensors

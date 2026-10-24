@@ -8,6 +8,7 @@
 #include <math.h>
 
 #include "board_config.h"
+#include "clock.h"
 #include "demo_source.h"
 #include "i2c_bus.h"
 #include "io_expander.h"
@@ -16,6 +17,25 @@
 
 namespace {
 SFE_UBLOX_GNSS g_gnss;
+
+// Diagnostics for the GPS bus holds: count any NMEA bytes the receiver still sends over I2C
+// (it should send none), time each poll and remember the backlog seen before the longest one.
+class CountingPrint : public Print {
+ public:
+  size_t write(uint8_t) override { count++; return 1; }
+  volatile uint32_t count = 0;
+} g_nmeaSink;
+uint32_t g_gpsPollMaxMs = 0, g_gpsPollMaxBacklog = 0, g_gpsPolls = 0, g_gpsPollTotalMs = 0;
+
+uint16_t gpsBytesAvailable() {  // u-blox register 0xFD/0xFE, high bit is an error flag
+  Wire.beginTransmission(I2C_ADDR_NEO_M9N);
+  Wire.write(0xFD);
+  if (Wire.endTransmission(false) != 0) return 0;
+  if (Wire.requestFrom(I2C_ADDR_NEO_M9N, (uint8_t)2) != 2) return 0;
+  uint16_t v = (uint16_t)Wire.read() << 8;
+  v |= Wire.read();
+  return v & 0x7FFF;
+}
 SparkFun_ISM330DHCX g_imu;
 Adafruit_VEML7700 g_lux;
 bool g_gpsOk = false, g_imuOk = false, g_luxOk = false;
@@ -37,11 +57,16 @@ uint32_t g_luxSinceMs = 0;
 bool g_luxBelow = false;
 
 bool gpsBegin() {
-  I2cLock guard(500, "gps.begin");
+  I2cLock guard(800, "gps.begin");
   if (!guard.ok() || !g_gnss.begin(Wire, I2C_ADDR_NEO_M9N)) return false;
-  g_gnss.setI2COutput(COM_TYPE_UBX);
-  g_gnss.setNavigationFrequency(GPS_NAV_RATE_HZ);
-  g_gnss.setAutoPVT(true);
+  g_gnss.setI2CTransactionSize(128);  // the ESP32 Wire buffer; four times fewer transactions per packet
+  g_gnss.setNMEAOutputPort(g_nmeaSink);
+  bool ubxOnly = false;
+  for (int i = 0; i < 3 && !ubxOnly; i++) ubxOnly = g_gnss.setI2COutput(COM_TYPE_UBX);
+  bool rate = g_gnss.setNavigationFrequency(GPS_NAV_RATE_HZ);
+  bool autoPvt = g_gnss.setAutoPVT(true);
+  Serial.printf("GPS: I2C UBX-only %s, nav rate %s, autoPVT %s\n", ubxOnly ? "ok" : "NOT ACKED", rate ? "ok" : "NOT ACKED",
+                autoPvt ? "ok" : "NOT ACKED");
   return true;
 }
 
@@ -89,28 +114,42 @@ void applyBacklight() {
 }
 
 void pollGps(uint32_t now) {
-  I2cLock guard(20, "gps");
-  if (!guard.ok() || !g_gnss.getPVT()) return;
   GpsData g;
-  g.stampMs = now;
-  g.fixType = g_gnss.getFixType();
-  g.fixOk = g_gnss.getGnssFixOk() && g.fixType >= 3;
-  g.sats = g_gnss.getSIV();
-  g.speedMps = g_gnss.getGroundSpeed() / 1000.0f;
-  g.speedAccMps = g_gnss.getSpeedAccEst() / 1000.0f;
-  g.hAccM = g_gnss.getHorizontalAccEst() / 1000.0f;
-  g.headingDeg = g_gnss.getHeading() / 100000.0f;
-  g.altM = g_gnss.getAltitudeMSL() / 1000.0f;
-  g.lat = g_gnss.getLatitude() / 1e7;
-  g.lon = g_gnss.getLongitude() / 1e7;
-  g.iTOW = g_gnss.getTimeOfWeek();
-  g.timeValid = g_gnss.getTimeValid() && g_gnss.getDateValid();
-  g.year = g_gnss.getYear();
-  g.month = g_gnss.getMonth();
-  g.day = g_gnss.getDay();
-  g.hour = g_gnss.getHour();
-  g.minute = g_gnss.getMinute();
-  g.second = g_gnss.getSecond();
+  {
+    I2cLock guard(20, "gps");
+    if (!guard.ok()) return;
+    uint32_t t0 = millis();
+    uint16_t backlog = gpsBytesAvailable();
+    bool fresh = g_gnss.getPVT();
+    uint32_t dt = millis() - t0;
+    g_gpsPolls++;
+    g_gpsPollTotalMs += dt;
+    if (dt > g_gpsPollMaxMs) {
+      g_gpsPollMaxMs = dt;
+      g_gpsPollMaxBacklog = backlog;
+    }
+    if (!fresh) return;
+    g.stampMs = now;
+    g.fixType = g_gnss.getFixType();
+    g.fixOk = g_gnss.getGnssFixOk() && g.fixType >= 3;
+    g.sats = g_gnss.getSIV();
+    g.speedMps = g_gnss.getGroundSpeed() / 1000.0f;
+    g.speedAccMps = g_gnss.getSpeedAccEst() / 1000.0f;
+    g.hAccM = g_gnss.getHorizontalAccEst() / 1000.0f;
+    g.headingDeg = g_gnss.getHeading() / 100000.0f;
+    g.altM = g_gnss.getAltitudeMSL() / 1000.0f;
+    g.lat = g_gnss.getLatitude() / 1e7;
+    g.lon = g_gnss.getLongitude() / 1e7;
+    g.iTOW = g_gnss.getTimeOfWeek();
+    g.timeValid = g_gnss.getTimeValid() && g_gnss.getDateValid();
+    g.year = g_gnss.getYear();
+    g.month = g_gnss.getMonth();
+    g.day = g_gnss.getDay();
+    g.hour = g_gnss.getHour();
+    g.minute = g_gnss.getMinute();
+    g.second = g_gnss.getSecond();
+  }  // the bus is released here: the RTC write below takes its own lock
+  if (g.timeValid && g.fixOk) Clock::setFromGps(g.year, g.month, g.day, g.hour, g.minute, g.second);
   VsLock lk;
   if (lk.ok()) Vs::raw().gps = g;
 }
@@ -230,12 +269,10 @@ void sensorTask(void *) {
         }
         vs.disp.speedKph = kph;
         bool motionFresh = vs.motion.stampMs && now - vs.motion.stampMs < STALE_IMU_MS;
-        char clock[8] = "--:--";
-        if (vs.gps.timeValid) snprintf(clock, sizeof(clock), "%02u:%02u", vs.gps.hour, vs.gps.minute);
         g_engine->update(now, kph, gpsFresh || carFresh, vs.gps.speedAccMps, vs.gps.sats, vs.motion.latG,
                          vs.motion.lonG, motionFresh, vs.car.powerKw, carFresh, vs.car.socPct,
                          vs.car.tempAvg, vs.gps.altM);
-        g_engine->publish(vs, clock);
+        g_engine->publish(vs);
       }
     }
     if (now - lastRate >= 1000) {
@@ -247,6 +284,7 @@ void sensorTask(void *) {
         vs.diag.imuHz = vs.imu.rateHz;
         vs.diag.i2cLongestHoldMs = I2cBus::longestHoldMs();
         vs.diag.i2cOverHold = I2cBus::overHoldCount();
+        vs.utcNow = Clock::nowUtc();
         (void)lastPvt;
       }
       lastRate = now;
@@ -277,10 +315,27 @@ bool gpsOk() { return g_gpsOk; }
 bool imuOk() { return g_imuOk; }
 bool luxOk() { return g_luxOk; }
 void calibrateMounting() { g_calibrateRequest = true; }
+bool mountingRef(float out[3]) {
+  for (int i = 0; i < 3; i++) out[i] = g_gRef[i];
+  return g_calibrated;
+}
+void setMountingRef(const float ref[3]) {
+  for (int i = 0; i < 3; i++) g_gRef[i] = ref[i];
+  g_calibrated = true;
+}
 
 void setNightMode(int mode) {
   g_nightMode = mode;
   applyBacklight();
+}
+
+void gpsStats(uint32_t *pollMaxMs, uint32_t *backlogAtMax, uint32_t *nmeaBytes, uint32_t *pollAvgMs) {
+  *pollMaxMs = g_gpsPollMaxMs;
+  *backlogAtMax = g_gpsPollMaxBacklog;
+  *nmeaBytes = g_nmeaSink.count;
+  *pollAvgMs = g_gpsPolls ? g_gpsPollTotalMs / g_gpsPolls : 0;
+  g_gpsPollMaxMs = g_gpsPollMaxBacklog = 0;
+  g_gpsPolls = g_gpsPollTotalMs = 0;
 }
 
 void setBrightness(uint8_t percent) {

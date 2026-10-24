@@ -65,8 +65,9 @@ void demoTask(void *) {
       if (lk.ok()) {
         VehicleState &vs = Vs::raw();
         if (g_engine) {
+          g_engine->setIsolated(on);  // demo records never reach today or lifetime
           g_engine->reset(now);
-          g_engine->publish(vs, nullptr);
+          g_engine->publish(vs);
         }
         if (!on) {
           // Leaving the demo: the car data was synthetic, so drop it (OBD is phase 3c).
@@ -155,10 +156,10 @@ void demoTask(void *) {
       vs.car.sohPct = 94.0f;
       vs.disp.speedKph = kph;
       vs.disp.speedSource = SpeedSource::Wheels;
-      snprintf(clock, sizeof(clock), "%02u:%02u", (unsigned)((now / 60000) % 24), (unsigned)((now / 1000) % 60));
+      (void)clock;
       if (g_engine) {
         g_engine->update(now, kph, true, 0.12f, 11, latG, lonG, true, power, true, g_soc, g_packTemp, 48.0f);
-        g_engine->publish(vs, clock);
+        g_engine->publish(vs);
       }
     }
   }

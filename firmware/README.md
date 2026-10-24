@@ -63,6 +63,10 @@ firmware/
   tools/screenshot.py       screenshot over serial
 ```
 
+### Storage and clock
+
+`src/app/storage.*`: NVS (Preferences, namespace `minidash`) holds settings, the mounting reference, the lifetime records and the trip id counter; LittleFS on the `ffat` partition (the 9 MB the partition scheme sets aside, formatted on first use) holds `/trips/<id>.trp` (last 60, binary with a magic and version), `/events/<id>-<rec>.evt` (12 s of speed, G and power at 10 Hz) and `/active.trp`, the checkpoint written every 30 s while a non-demo trip has distance. At boot a checkpoint is closed into a trip file: a trip ends at power loss by design. Demo trips are never stored. `src/app/clock.*`: PCF85063A RTC read at boot, set from GPS once, UTC everywhere, Melbourne local time with the DST rule for display and day grouping. Serial keys `W` and `X` write and remove self-test trip and event files; `e` opens the first record's event page.
+
 ### Fonts
 
 Inter 4.1 (SIL OFL) with the tabular-figures feature frozen into the default digits with fontTools (Inter's default digits are proportional), then converted with lv_font_conv 1.5.3 at 4 bpp, uncompressed: Medium 88 and 60 (digits and signs only), Medium 40/34/30/28/26, Regular 18/16/14, SemiBold 26/16 (ASCII plus – — · ° ± − ← → ↻ ☼). About 600 KB of flash. Regenerate with the recipe in docs/design/README.md.
@@ -71,7 +75,7 @@ Inter 4.1 (SIL OFL) with the tabular-figures feature frozen into the default dig
 
 Done: LVGL on the panel with touch, splash with the emblem, header status cluster, five tabs with swipe, Settings by header tap, Drive, Trip (records, journey totals, event page without traces), Dynamics, Energy, Battery, demo replay, the trip and records engine, GPS, IMU and lux into the state, night mode from lux, screenshot tool.
 
-Not yet: records and trip history storage (Today and All time are since power-on only), event trace capture, the gyro-propagated attitude (the IMU path uses a static mounting reference and a 5 Hz low-pass), the GPS and accelerometer speed fusion (displayed speed is wheel speed when OBD is live, else raw GPS), timezone and DST (the clock adds 11 h), start-screen preference, WiFi OTA, units persistence, the 30 fps target, and the GPS poll's 80 to 108 ms bus holds seen after two minutes (docs/test-log.md).
+Not yet: the gyro-propagated attitude (the IMU path uses a static mounting reference and a 5 Hz low-pass), the GPS and accelerometer speed fusion (displayed speed is wheel speed when OBD is live, else raw GPS), start-screen preference, WiFi OTA, the 30 fps target, the 30-minute I2C soak, and the first real-data drive for the trip and checkpoint paths. Done since: records and trip storage, event traces, the clock with DST, settings persistence, the GPS bus holds.
 
 ## Phase 3a: bring-up (`env:bringup`)
 

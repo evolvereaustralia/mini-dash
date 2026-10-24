@@ -6,6 +6,8 @@
 
 namespace {
 SemaphoreHandle_t g_mutex = nullptr;
+TaskHandle_t g_holder = nullptr;
+uint32_t g_nestedAttempts = 0;
 uint32_t g_overHold = 0;     // written only by lock holders, read for the log
 uint32_t g_longestHold = 0;
 const char *g_longestWho = "-";
@@ -24,12 +26,25 @@ void begin() {
 
 bool lock(uint32_t timeoutMs) {
   if (g_mutex == nullptr) return false;
-  return xSemaphoreTake(g_mutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+  if (g_holder == xTaskGetCurrentTaskHandle()) {
+    // The mutex is deliberately not recursive: a nested take from the same task would wait
+    // the whole timeout and fail (seen with the RTC write inside the GPS poll, 24 Oct 2026).
+    g_nestedAttempts++;
+    log_e("I2C lock taken again by its own holder; fix the caller");
+    return false;
+  }
+  if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) return false;
+  g_holder = xTaskGetCurrentTaskHandle();
+  return true;
 }
 
 void unlock() {
-  if (g_mutex != nullptr) xSemaphoreGive(g_mutex);
+  if (g_mutex == nullptr) return;
+  g_holder = nullptr;
+  xSemaphoreGive(g_mutex);
 }
+
+uint32_t nestedAttempts() { return g_nestedAttempts; }
 
 uint32_t overHoldCount() { return g_overHold; }
 uint32_t longestHoldMs() { return g_longestHold; }

@@ -22,6 +22,7 @@ constexpr uint32_t MAX_HOLD_MS = 25;
 // Number of times a holder exceeded MAX_HOLD_MS, and the longest hold seen, for the log.
 uint32_t overHoldCount();
 uint32_t longestHoldMs();
+uint32_t nestedAttempts();  // times a task tried to take the lock it already held (a bug, logged)
 // Zero the hold statistics, so the steady-state figures are not dominated by the one-off
 // sensor initialisation (GPS begin alone holds the bus for about 250 ms).
 void resetStats();

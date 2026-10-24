@@ -87,6 +87,8 @@ struct Record {
   bool beatLifetime = false;
   float previous = 0;    // baseline for the comparison line
   bool hasPrevious = false;
+  uint32_t tripId = 0;   // the trip the event belongs to (its trace file is keyed on it)
+  uint32_t utc = 0;      // when, UTC seconds; 0 if no clock
 };
 
 struct RecordSet {
@@ -110,6 +112,17 @@ struct Diagnostics {
   char touchId[5] = "";
 };
 
+// What the storage layer knows, for the Trip scopes and the Settings page.
+struct StoreStats {
+  bool fsOk = false;
+  uint16_t storedTrips = 0;
+  uint16_t todayTrips = 0;   // completed trips today, excluding the current one
+  float todayKm = 0;
+  uint16_t allTrips = 0;
+  float allKm = 0;
+  uint32_t usedKb = 0, totalKb = 0;
+};
+
 struct VehicleState {
   GpsData gps;
   ImuData imu;
@@ -119,6 +132,10 @@ struct VehicleState {
   RecordSet recTrip, recToday, recAll;
   DisplayState disp;
   Diagnostics diag;
+  StoreStats store;
+  uint32_t utcNow = 0;        // from the RTC or GPS; 0 until a clock exists
+  uint32_t tripId = 0;
+  uint32_t tripStartUtc = 0;
   bool demo = false;  // demo replay is the source of speed, motion and car data
   bool sensorsReady = false;
 };

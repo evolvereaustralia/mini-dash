@@ -43,4 +43,10 @@ One line of reasoning per decision, dated. Newest at the bottom. Hardware and ar
 - 2026-10-24: UI text is positioned by baseline from the font metrics, not by box top. The converted digit-only faces have no leading, so box-top placement collided the speed and SOC figures with their captions (Logan's photo); a baseline grid per page also fixes the uneven alignment between mixed sizes.
 - 2026-10-24: Settings gets a gear icon at the right of the header (Montserrat's built-in symbol) because the header tap was undiscoverable; the whole header remains the tap target.
 - 2026-10-24: Hardware behaviour is only logged as a pass when a person or an instrument saw it; the touch row had been marked from read statistics alone and was wrong.
+- 2026-10-24: GPS I2C transactions are 128 bytes (the ESP32 Wire buffer) and the receiver's UBX-only, nav-rate and autoPVT settings are checked by their acknowledgements and retried; the 80 to 108 ms bus holds went away with this.
+- 2026-10-24: The I2C mutex stays non-recursive and now rejects and logs a nested take from its own holder, because a nested take silently cost 50 ms per GPS fix and halved the IMU rate.
+- 2026-10-24: Storage layout: NVS for settings, mounting reference, lifetime records and the trip id counter; LittleFS on the "ffat" partition for /trips/<id>.trp (last 60), /events/<id>-<rec>.evt (12 s at 10 Hz, 10 bytes a sample) and /active.trp (checkpoint every 30 s). Files are written to a temporary name and renamed so a power cut leaves the old or the new file, never a torn one.
+- 2026-10-24: Demo trips are never stored and never touch today or lifetime records (the engine runs isolated while the demo is on); their event traces are deleted when the demo trip ends.
+- 2026-10-24: Session record comparisons are against the last stored trip; a first-ever record says so. Today is seeded from today's stored trips at trip start, lifetime from NVS.
+- 2026-10-24: Wall clock from the board's PCF85063A RTC, set from GPS once per boot; UTC stored, Australia/Melbourne with the DST rule for display and day grouping.
 

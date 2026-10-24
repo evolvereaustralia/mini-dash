@@ -10,15 +10,25 @@
 // time and distance from the 100 crossing to the first sample under 1 km/h with braking g.
 // 60-100 is a rolling run from any crossing of 60 upward to 100. Power peaks are one-second
 // means; the instantaneous maximum is kept in aux.
+//
+// Records live in three sets: the session (this trip), today (seeded from today's stored
+// trips) and lifetime (seeded from NVS). Session comparisons are against the last stored trip.
+// A 12 s trace ring at 10 Hz is captured; when a record is accepted the window around it is
+// handed to the event sink 2 s later, so the trace shows what followed the event too.
+// In isolated mode (demo replay) only the session set is touched.
 #pragma once
 
 #include <stdint.h>
 
+#include "storage.h"
 #include "vehicle_state.h"
 
 class TripEngine {
  public:
-  void reset(uint32_t nowMs);
+  typedef void (*EventSink)(uint32_t tripId, int rec, const Storage::TraceSample *samples, size_t n);
+
+  void startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc);
+  void reset(uint32_t nowMs) { startTrip(tripId_, nowMs, startUtc_); }
 
   // One update with whatever is fresh. speedValid false means the timers invalidate.
   void update(uint32_t nowMs, float speedKph, bool speedValid, float speedAccMps, uint8_t sats,
@@ -26,10 +36,22 @@ class TripEngine {
               float packTemp, float altM);
 
   // Writes trip, motion peaks and the three record sets into the state (caller holds the lock).
-  void publish(VehicleState &vs, const char *clockHHMM) const;
+  void publish(VehicleState &vs) const;
 
   void resetSessionPeaks();
-  void setLifetime(const RecordSet &all) { all_ = all; }  // loaded from NVS at boot (later)
+
+  void setLifetime(const RecordSet &all) { all_ = all; }
+  void setToday(const RecordSet &today) { today_ = today; }
+  void setLastTrip(const RecordSet &last) { lastTrip_ = last; }
+  void setIsolated(bool isolated) { isolated_ = isolated; }
+  void setEventSink(EventSink sink) { sink_ = sink; }
+
+  const RecordSet &lifetime() const { return all_; }
+  bool lifetimeDirty() { bool d = lifetimeDirty_; lifetimeDirty_ = false; return d; }
+  uint32_t tripId() const { return tripId_; }
+
+  // Fill a summary of the session for the checkpoint or the trip file.
+  void summary(Storage::TripSummary &out, uint32_t nowMs, bool demo) const;
 
  private:
   enum class RunState { Idle, Armed, Running, Done };
@@ -59,11 +81,20 @@ class TripEngine {
   uint32_t powerWindowStartMs_ = 0;
   float instMaxDraw_ = 0, instMaxRegen_ = 0;
 
+  // trace ring and pending events
+  Storage::TraceSample ring_[Storage::TRACE_MAX] = {};
+  int ringHead_ = 0, ringCount_ = 0;
+  uint32_t lastTraceMs_ = 0;
+  uint32_t pendingMs_[REC_COUNT] = {};
+  EventSink sink_ = nullptr;
+
   TripData trip_;
   MotionData peaks_;
-  RecordSet session_, today_, all_;
+  RecordSet session_, today_, all_, lastTrip_;
+  bool isolated_ = false;
+  bool lifetimeDirty_ = false;
+  uint32_t tripId_ = 0, startUtc_ = 0, startMs_ = 0;
   uint32_t lastMs_ = 0;
-  float lastSoc_ = -1;
 
   void accept(RecordId id, float value, float aux, uint32_t nowMs, float soc, float temp,
               bool lowerIsBetter);
@@ -71,5 +102,6 @@ class TripEngine {
   void checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float lonG, float speedAccMps,
                         uint8_t sats, float soc, float temp);
   void checkPower(uint32_t nowMs, float powerKw, bool carLive, bool moving, float soc, float temp);
-  mutable char clock_[12] = "";
+  void traceSample(uint32_t nowMs, float kph, float latG, float lonG, float kw);
+  void flushEvents(uint32_t nowMs);
 };

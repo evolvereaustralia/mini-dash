@@ -3,6 +3,8 @@
 #include <math.h>
 #include <string.h>
 
+#include "clock.h"
+
 namespace {
 constexpr float ARM_KPH = 1.0f;
 constexpr float ARM_G = 0.05f;
@@ -11,14 +13,25 @@ constexpr uint32_t MAX_GAP_MS = 300;
 constexpr float GATE_SPEED_ACC = 0.5f;  // m/s
 constexpr uint8_t GATE_SATS = 7;
 constexpr float MOVING_KPH = 2.0f;
+constexpr uint32_t EVENT_TAIL_MS = 2000;
 
-void stamp(char *out, size_t n, const char *clock) {
-  strncpy(out, clock && clock[0] ? clock : "--:--", n - 1);
-  out[n - 1] = 0;
+void stampWhen(Record &r, bool dateNotTime) {
+  uint32_t utc = Clock::nowUtc();
+  r.utc = utc;
+  if (utc == 0) {
+    strncpy(r.when, "--:--", sizeof(r.when) - 1);
+  } else if (dateNotTime) {
+    Clock::formatDayMonth(utc, r.when, sizeof(r.when));
+  } else {
+    Clock::formatHM(utc, r.when, sizeof(r.when));
+  }
 }
 }  // namespace
 
-void TripEngine::reset(uint32_t nowMs) {
+void TripEngine::startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc) {
+  tripId_ = tripId;
+  startUtc_ = startUtc;
+  startMs_ = nowMs;
   trip_ = TripData();
   trip_.startMs = nowMs;
   session_ = RecordSet();
@@ -29,8 +42,10 @@ void TripEngine::reset(uint32_t nowMs) {
   powerN_ = 0;
   powerWindowStartMs_ = nowMs;
   instMaxDraw_ = instMaxRegen_ = 0;
+  ringHead_ = ringCount_ = 0;
+  lastTraceMs_ = 0;
+  memset(pendingMs_, 0, sizeof(pendingMs_));
   lastMs_ = nowMs;
-  lastSoc_ = -1;
   resetSessionPeaks();
 }
 
@@ -46,9 +61,10 @@ float TripEngine::crossingMs(float v0, uint32_t t0, float v1, uint32_t t1, float
 
 void TripEngine::accept(RecordId id, float value, float aux, uint32_t nowMs, float soc, float temp,
                         bool lowerIsBetter) {
+  bool beatAll = !isolated_ && (!all_.r[id].valid || (lowerIsBetter ? value < all_.r[id].value : value > all_.r[id].value));
   RecordSet *sets[3] = {&session_, &today_, &all_};
-  bool beatAll = !all_.r[id].valid || (lowerIsBetter ? value < all_.r[id].value : value > all_.r[id].value);
-  for (int s = 0; s < 3; s++) {
+  int nSets = isolated_ ? 1 : 3;
+  for (int s = 0; s < nSets; s++) {
     Record &r = sets[s]->r[id];
     r.runs++;
     bool better = !r.valid || (lowerIsBetter ? value < r.value : value > r.value);
@@ -56,14 +72,52 @@ void TripEngine::accept(RecordId id, float value, float aux, uint32_t nowMs, flo
     if (r.valid) {
       r.previous = r.value;
       r.hasPrevious = true;
+    } else if (s == 0 && lastTrip_.r[id].valid) {
+      r.previous = lastTrip_.r[id].value;  // first of this trip: compare with the last trip
+      r.hasPrevious = true;
     }
     r.valid = true;
     r.value = value;
     r.aux = aux;
     r.socPct = soc;
     r.packTemp = temp;
-    stamp(r.when, sizeof(r.when), clock_);
+    r.tripId = tripId_;
+    stampWhen(r, s == 2);
     r.beatLifetime = beatAll;
+    if (s == 2) lifetimeDirty_ = true;
+  }
+  pendingMs_[id] = nowMs + EVENT_TAIL_MS;  // hand the trace over once the tail has been captured
+}
+
+void TripEngine::traceSample(uint32_t nowMs, float kph, float latG, float lonG, float kw) {
+  if (lastTraceMs_ != 0 && nowMs - lastTraceMs_ < 100) return;
+  lastTraceMs_ = nowMs;
+  Storage::TraceSample &t = ring_[ringHead_];
+  t.t10 = (uint16_t)((nowMs / 100) & 0xFFFF);
+  t.kph10 = (int16_t)lroundf(kph * 10.0f);
+  t.latMg = (int16_t)lroundf(latG * 1000.0f);
+  t.lonMg = (int16_t)lroundf(lonG * 1000.0f);
+  t.kw10 = (int16_t)lroundf(kw * 10.0f);
+  ringHead_ = (ringHead_ + 1) % Storage::TRACE_MAX;
+  if (ringCount_ < (int)Storage::TRACE_MAX) ringCount_++;
+}
+
+void TripEngine::flushEvents(uint32_t nowMs) {
+  if (sink_ == nullptr) return;
+  for (int id = 0; id < REC_COUNT; id++) {
+    if (pendingMs_[id] == 0 || nowMs < pendingMs_[id]) continue;
+    pendingMs_[id] = 0;
+    Storage::TraceSample out[Storage::TRACE_MAX];
+    int n = 0;
+    uint16_t t0 = 0;
+    for (int i = 0; i < ringCount_; i++) {
+      int idx = (ringHead_ - ringCount_ + i + Storage::TRACE_MAX) % Storage::TRACE_MAX;
+      out[n] = ring_[idx];
+      if (n == 0) t0 = out[n].t10;
+      out[n].t10 = (uint16_t)(out[n].t10 - t0);  // relative to the window start
+      n++;
+    }
+    if (n > 0) sink_(tripId_, id, out, (size_t)n);
   }
 }
 
@@ -230,10 +284,11 @@ void TripEngine::update(uint32_t nowMs, float speedKph, bool speedValid, float s
 
   checkSpeedTimers(nowMs, speedKph, speedValid, lonG, speedAccMps, sats, socPct, packTemp);
   checkPower(nowMs, powerKw, carLive, moving, socPct, packTemp);
+  traceSample(nowMs, speedValid ? speedKph : 0, motionValid ? latG : 0, motionValid ? lonG : 0, carLive ? powerKw : 0);
+  flushEvents(nowMs);
 }
 
-void TripEngine::publish(VehicleState &vs, const char *clockHHMM) const {
-  if (clockHHMM) strncpy(clock_, clockHHMM, sizeof(clock_) - 1);
+void TripEngine::publish(VehicleState &vs) const {
   vs.trip = trip_;
   vs.motion.peakLeft = peaks_.peakLeft;
   vs.motion.peakRight = peaks_.peakRight;
@@ -242,4 +297,18 @@ void TripEngine::publish(VehicleState &vs, const char *clockHHMM) const {
   vs.recTrip = session_;
   vs.recToday = today_;
   vs.recAll = all_;
+  vs.tripId = tripId_;
+  vs.tripStartUtc = startUtc_;
+}
+
+void TripEngine::summary(Storage::TripSummary &out, uint32_t nowMs, bool demo) const {
+  out.id = tripId_;
+  out.startUtc = startUtc_;
+  out.durationS = (nowMs - startMs_) / 1000;
+  out.endUtc = startUtc_ ? startUtc_ + out.durationS : 0;
+  out.demo = demo;
+  out.closed = false;
+  out.trip = trip_;
+  out.records = session_;
+  out.peaks = peaks_;
 }
