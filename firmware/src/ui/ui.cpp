@@ -187,57 +187,67 @@ void bestNextCb(lv_event_t *) {
 }
 
 void buildDrive(lv_obj_t *p) {
+  // Baseline grid (content coordinates). Captions on 24, big figures on 104 (speed) and 84
+  // (SOC), second captions on 166, second figures on 198, small lines on 240 and 262, footer
+  // text on 346. Left column at x 20, right column ending at x 780, plot centred on 400.
   // left column
-  caption(p, 20, 8, "SPEED");
+  caption(p, 20, yForBaseline(&inter_rg_16, 24), "SPEED");
   D.srcPill = pill(p, 92, 6, "GPS", MUTED);
   D.srcL = buttonLabel(D.srcPill);
-  D.speed = label(p, &inter_md_88, FG, 16, 24, "—");
-  D.sub = label(p, &inter_rg_16, MUTED, 20, 124, "km/h");
-  caption(p, 20, 156, "BATTERY POWER");
-  D.power = label(p, &inter_md_30, FG, 20, 176, "—");
-  lv_obj_t *track = panel(p, 20, 220, PBAR_W, 10, LINE, 3);
+  D.speed = blabel(p, &inter_md_88, FG, 16, 104, "—");
+  D.sub = blabel(p, &inter_rg_16, MUTED, 20, 128, "km/h");
+  caption(p, 20, yForBaseline(&inter_rg_16, 166), "BATTERY POWER");
+  D.power = blabel(p, &inter_md_30, FG, 20, 198, "—");
+  lv_obj_t *track = panel(p, 20, 212, PBAR_W, 10, LINE, 3);
   D.pFill = panel(track, (int)(PBAR_W * PBAR_ZERO), 0, 0, 10, LIME, 0);
   lv_obj_t *zero = panel(track, (int)(PBAR_W * PBAR_ZERO) - 1, -2, 2, 14, FG, 0);
   (void)zero;
-  label(p, &inter_rg_14, MUTED, 20, 236, "−60");
-  label(p, &inter_rg_14, MUTED, 20 + (int)(PBAR_W * PBAR_ZERO) - 4, 236, "0");
-  lv_obj_t *r150 = label(p, &inter_rg_14, MUTED, 20 + PBAR_W - 52, 236, "+150 kW");
-  (void)r150;
-  D.pWord = label(p, &inter_rg_16, MUTED, 20, 256, "No car data");
+  blabel(p, &inter_rg_14, MUTED, 20, 240, "−60");
+  blabel(p, &inter_rg_14, MUTED, 20 + (int)(PBAR_W * PBAR_ZERO) - 4, 240, "0");
+  brlabel(p, &inter_rg_14, MUTED, 20 + PBAR_W, 240, 70, "+150 kW");
+  D.pWord = blabel(p, &inter_rg_16, MUTED, 20, 262, "No car data");
 
   // centre
   D.plot.create(p, 255, 2, 290);
 
-  // right column, right aligned at x = 780
-  lv_obj_t *l;
-  l = caption(p, 0, 8, "STATE OF CHARGE");
-  lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -20, 8);
-  D.soc = rlabel(p, &inter_md_60, FG, 748, 26, 140, "—");
-  D.socPct = label(p, &inter_md_28, MUTED, 0, 54, "%");
-  lv_obj_align(D.socPct, LV_ALIGN_TOP_RIGHT, -20, 54);
-  lv_obj_t *strack = panel(p, 580, 100, 200, 10, LINE, 3);
+  // right column, ending at x = 780
+  brlabel(p, &inter_rg_16, MUTED, 780, 24, 220, "STATE OF CHARGE");
+  lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
+  D.soc = brlabel(p, &inter_md_60, FG, 748, 84, 140, "—");
+  D.socPct = brlabel(p, &inter_md_28, MUTED, 780, 84, 30, "%");
+  lv_obj_t *strack = panel(p, 580, 96, 200, 10, LINE, 3);
   D.socWin = panel(strack, 0, 0, 200, 10, PANEL2, 3);
   D.socFill = panel(strack, 0, 0, 0, 10, LIME, 3);
-  l = label(p, &inter_rg_16, MUTED, 0, 116, "Displayed SOC");
-  lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -20, 116);
-  l = caption(p, 0, 150, "RANGE · CAR");
-  lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -20, 150);
-  D.range = rlabel(p, &inter_md_30, FG, 780, 170, 200, "—");
-  D.packLine = rlabel(p, &inter_rg_16, MUTED, 780, 206, 300, "Pack — · 12 V —");
+  brlabel(p, &inter_rg_16, MUTED, 780, 128, 200, "Displayed SOC");
+  brlabel(p, &inter_rg_16, MUTED, 780, 166, 200, "RANGE · CAR");
+  lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
+  D.range = brlabel(p, &inter_md_30, FG, 780, 198, 200, "—");
+  D.packLine = brlabel(p, &inter_rg_16, MUTED, 780, 262, 300, "Pack — · 12 V —");
 
-  // footer
+  // footer: three cells on one baseline, left-aligned, centred, right-aligned
   rule(p, 20, 304, 760);
-  label(p, &inter_rg_16, MUTED, 20, 324, "Combined G");
-  D.combined = label(p, &inter_md_26, FG, 118, 318, "—");
-  label(p, &inter_rg_16, MUTED, 320, 324, "Trip");
-  D.trip = label(p, &inter_md_26, FG, 358, 318, "—");
-  D.bestBtn = box(p, 540, 308, 240, 52);
+  blabel(p, &inter_rg_16, MUTED, 20, 346, "Combined G");
+  D.combined = blabel(p, &inter_md_26, FG, 122, 346, "—");
+  lv_obj_t *mid = box(p, 280, 310, 240, 50);
+  lv_obj_set_flex_flow(mid, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(mid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(mid, 8, 0);
+  lv_obj_t *tl = label(mid, &inter_rg_16, MUTED, 0, 0, "Trip");
+  lv_obj_set_style_pad_bottom(tl, 2 + 8, 0);  // baseline match with the 26 px value (bl 6 vs 4)
+  D.trip = label(mid, &inter_md_26, FG, 0, 0, "—");
+  lv_obj_set_style_pad_bottom(D.trip, 8, 0);
+  D.bestBtn = box(p, 540, 304, 240, 56);
   lv_obj_add_flag(D.bestBtn, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(D.bestBtn, bestNextCb, LV_EVENT_CLICKED, nullptr);
-  D.bestName = rlabel(D.bestBtn, &inter_rg_16, MUTED, 110, 16, 110, "Lateral best");
-  D.bestVal = rlabel(D.bestBtn, &inter_md_26, LIME, 214, 10, 100, "—");
-  lv_obj_t *cyc = label(D.bestBtn, &inter_rg_18, MUTED, 222, 14, "↻");
-  (void)cyc;
+  lv_obj_set_flex_flow(D.bestBtn, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(D.bestBtn, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(D.bestBtn, 8, 0);
+  D.bestName = label(D.bestBtn, &inter_rg_16, MUTED, 0, 0, "Lateral best");
+  lv_obj_set_style_pad_bottom(D.bestName, 2 + 8, 0);
+  D.bestVal = label(D.bestBtn, &inter_md_26, LIME, 0, 0, "—");
+  lv_obj_set_style_pad_bottom(D.bestVal, 8, 0);
+  lv_obj_t *cyc = label(D.bestBtn, &inter_rg_18, MUTED, 0, 0, "↻");
+  lv_obj_set_style_pad_bottom(cyc, 2 + 8, 0);
 }
 
 void updateDrive() {
@@ -383,49 +393,51 @@ void journeyCb(lv_event_t *) { tripShowView(TV_JOURNEY); }
 void recordsCb(lv_event_t *) { tripShowView(TV_RECORDS); }
 
 void buildTrip(lv_obj_t *p) {
-  T.title = caption(p, 20, 10, "TRIP RECORDS");
-  T.ctx = label(p, &inter_rg_16, MUTED, 20, 30, "");
+  // Baselines: title 24, context 44; tiles at y 66 and 187 (111 high): caption 22, value 60,
+  // sub 82, comparison 100 inside the tile; strip values 334, strip captions 354.
+  T.title = caption(p, 20, yForBaseline(&inter_rg_16, 24), "TRIP RECORDS");
+  T.ctx = blabel(p, &inter_rg_16, MUTED, 20, 44, "");
   T.scope = segmented(p, 522, 8, 84, 48, SCOPE_NAMES, 3, scopeCb);
   T.scope.select(0);
 
   T.grid = box(p, 20, 66, 760, 232);
   for (int i = 0; i < REC_COUNT; i++) {
     int col = i % 3, row = i / 3;
-    lv_obj_t *t = panel(T.grid, col * 257, row * 121, 247, 111, PANEL, 10);
+    lv_obj_t *t = panel(T.grid, col * 257, row * 121, 246, 111, PANEL, 10);
     lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(t, tileCb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     T.tile[i] = t;
-    caption(t, 14, 10, REC_NAMES[i], &inter_rg_14);
-    T.tVal[i] = label(t, &inter_md_40, MUTED, 14, 28, "—");
-    T.tUnit[i] = label(t, &inter_rg_18, MUTED, 120, 48, "");
-    T.tSub[i] = label(t, &inter_rg_14, MUTED, 14, 72, "No valid run yet");
-    T.tCmp[i] = label(t, &inter_rg_14, MUTED, 14, 90, "");
+    caption(t, 14, yForBaseline(&inter_rg_14, 22), REC_NAMES[i], &inter_rg_14);
+    T.tVal[i] = blabel(t, &inter_md_40, MUTED, 14, 60, "—");
+    T.tUnit[i] = blabel(t, &inter_rg_18, MUTED, 120, 60, "");
+    T.tSub[i] = blabel(t, &inter_rg_14, MUTED, 14, 82, "No valid run yet");
+    T.tCmp[i] = blabel(t, &inter_rg_14, MUTED, 14, 100, "");
   }
   T.strip = box(p, 20, 304, 760, 56);
   auto kv = [&](int x, const char *cap, lv_obj_t **val) {
-    *val = label(T.strip, &inter_md_26, FG, x, 2, "—");
-    label(T.strip, &inter_rg_14, MUTED, x, 36, cap);
+    *val = blabel(T.strip, &inter_md_26, FG, x, 30, "—");
+    blabel(T.strip, &inter_rg_14, MUTED, x, 50, cap);
   };
   kv(0, "distance", &T.sDist);
-  kv(140, "efficiency", &T.sEff);
-  kv(320, "recovered", &T.sRec);
-  kv(478, "SOC used", &T.sSoc);
+  kv(150, "efficiency", &T.sEff);
+  kv(330, "recovered", &T.sRec);
+  kv(490, "SOC used", &T.sSoc);
   T.journeyBtn = button(T.strip, 606, 4, 154, 48, "Journey totals →", &inter_rg_16, FG, PANEL, journeyCb, nullptr);
 
   T.journey = box(p, 20, 66, 760, 294);
   for (int i = 0; i < 12; i++) {
     int col = i % 4, row = i / 4;
-    caption(T.journey, col * 193, row * 66, JOURNEY_NAMES[i], &inter_rg_14);
-    T.jVal[i] = label(T.journey, &inter_md_30, FG, col * 193, row * 66 + 18, "—");
+    caption(T.journey, col * 193, yForBaseline(&inter_rg_14, row * 68 + 14), JOURNEY_NAMES[i], &inter_rg_14);
+    T.jVal[i] = blabel(T.journey, &inter_md_30, FG, col * 193, row * 68 + 46, "—");
   }
-  label(T.journey, &inter_rg_14, MUTED, 0, 214, "Moving time excludes stops · 60–100 is a rolling run, counted on its own");
-  T.jBack = button(T.journey, 646, 236, 114, 48, "← Records", &inter_rg_16, FG, PANEL, recordsCb, nullptr);
+  blabel(T.journey, &inter_rg_14, MUTED, 0, 226, "Moving time excludes stops · 60–100 is a rolling run, counted on its own");
+  T.jBack = button(T.journey, 646, 240, 114, 48, "← Records", &inter_rg_16, FG, PANEL, recordsCb, nullptr);
   show(T.journey, false);
 
   T.event = box(p, 20, 60, 760, 300);
-  T.eCtx = caption(T.event, 0, 0, "THIS TRIP");
-  T.eTitle = label(T.event, &inter_md_30, FG, 0, 22, "");
-  T.eMeta = label(T.event, &inter_rg_16, MUTED, 0, 70, "");
+  T.eCtx = caption(T.event, 0, yForBaseline(&inter_rg_16, 16), "THIS TRIP");
+  T.eTitle = blabel(T.event, &inter_md_30, FG, 0, 50, "");
+  T.eMeta = label(T.event, &inter_rg_16, MUTED, 0, 74, "");
   lv_obj_set_width(T.eMeta, 740);
   lv_label_set_long_mode(T.eMeta, LV_LABEL_LONG_WRAP);
   T.eNote = label(T.event, &inter_rg_14, MUTED, 0, 150, "Synchronised speed, G and battery traces for this event arrive with records storage (next step).");
@@ -453,7 +465,11 @@ void updateTrip() {
       bool moved = setTextF(T.tVal[i], REC_FMT[i], r.value);
       setColor(T.tVal[i], FG);
       moved |= setText(T.tUnit[i], REC_UNITS[i]);
-      if (moved) lv_obj_align_to(T.tUnit[i], T.tVal[i], LV_ALIGN_OUT_RIGHT_BOTTOM, 6, -6);
+      if (moved) {
+        lv_point_t sz;
+        lv_txt_get_size(&sz, lv_label_get_text(T.tVal[i]), &inter_md_40, -1, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_obj_set_x(T.tUnit[i], 14 + sz.x + 6);
+      }
       char sub[48];
       switch (i) {
         case REC_0_60:
@@ -463,9 +479,12 @@ void updateTrip() {
         default: snprintf(sub, sizeof(sub), "1 s mean · max %.1f · %s", r.aux, r.when); break;
       }
       setText(T.tSub[i], sub);
-      if (r.hasPrevious) {
-        float d = r.value - r.previous;
+      float d = r.hasPrevious ? r.value - r.previous : 0;
+      float minStep = i == REC_LAT ? 0.01f : 0.1f;
+      if (r.hasPrevious && fabsf(d) >= minStep) {
         setTextF(T.tCmp[i], "%+.*f %s vs previous", i == REC_LAT ? 2 : 1, d, REC_UNITS[i]);
+      } else if (r.hasPrevious) {
+        setText(T.tCmp[i], "Best of this trip");
       } else {
         setText(T.tCmp[i], T.scopeIdx == 0 ? "First of this trip" : "First recorded");
       }
@@ -548,30 +567,38 @@ void resetPeaksCb(lv_event_t *) {
 void buildDynamics(lv_obj_t *p) {
   Y.plot.create(p, 20, 10, 330);
   const int X = 366, W = 414;
-  auto row = [&](int y, const char *name, const lv_font_t *font, lv_obj_t **val, bool sub) {
-    label(p, &inter_rg_16, MUTED, X, y + (sub ? 10 : 12), name);
-    *val = rlabel(p, font, FG, 780, y + (sub ? 6 : 2), 230, "—");
-    rule(p, X, y + (sub ? 40 : 46), W);
+  // Rows of 48 px: label and value share the baseline 30 px into the row; rule at 46.
+  auto row = [&](int y, const char *name, const lv_font_t *font, lv_obj_t **val) {
+    blabel(p, &inter_rg_16, MUTED, X, y + 30, name);
+    *val = brlabel(p, font, FG, 780, y + 30, 230, "—");
+    rule(p, X, y + 46, W);
   };
-  row(0, "Lateral", &inter_md_28, &Y.lat, false);
-  row(48, "Longitudinal", &inter_md_28, &Y.lon, false);
-  row(96, "Combined", &inter_md_28, &Y.comb, false);
-  row(144, "Yaw rate", &inter_md_28, &Y.yaw, false);
-  // peaks row: four values with small captions beneath
-  label(p, &inter_rg_16, MUTED, X, 206, "Peaks");
+  row(0, "Lateral", &inter_md_28, &Y.lat);
+  row(48, "Longitudinal", &inter_md_28, &Y.lon);
+  row(96, "Combined", &inter_md_28, &Y.comb);
+  row(144, "Yaw rate", &inter_md_28, &Y.yaw);
+  // Peaks: four values on baseline 222 with captions on 240, reset button centred on them.
+  blabel(p, &inter_rg_16, MUTED, X, 222, "Peaks");
   static const char *PK_CAP[4] = {"L", "R", "ACC", "BRK"};
   for (int i = 0; i < 4; i++) {
-    Y.pk[i] = rlabel(p, &inter_md_26, FG, 486 + i * 68, 196, 64, "—");
-    lv_obj_t *cp = rlabel(p, &inter_rg_14, MUTED, 486 + i * 68, 226, 64, PK_CAP[i]);
+    Y.pk[i] = brlabel(p, &inter_md_26, FG, 486 + i * 68, 222, 64, "—");
+    lv_obj_t *cp = brlabel(p, &inter_rg_14, MUTED, 486 + i * 68, 240, 64, PK_CAP[i]);
     lv_obj_set_style_text_letter_space(cp, 1, 0);
   }
   Y.reset = button(p, 710, 200, 70, 34, "RESET", &inter_rg_14, LIME, PANEL, resetPeaksCb, nullptr);
   lv_obj_set_style_border_width(Y.reset, 1, 0);
   lv_obj_set_style_border_color(Y.reset, c(LINE), 0);
-  rule(p, X, 246, W);
-  row(252, "Torque actual / requested", &inter_md_26, &Y.torque, true);
-  row(294, "Pedal · motor temps", &inter_md_26, &Y.pedal, true);
+  rule(p, X, 250, W);
+  // Two drivetrain rows of 42 px: baseline 28 into the row, rule at 40.
+  auto sub = [&](int y, const char *name, lv_obj_t **val) {
+    blabel(p, &inter_rg_16, MUTED, X, y + 28, name);
+    *val = brlabel(p, &inter_md_26, FG, 780, y + 28, 230, "—");
+    rule(p, X, y + 40, W);
+  };
+  sub(256, "Torque actual / requested", &Y.torque);
+  sub(298, "Pedal · motor temps", &Y.pedal);
 }
+
 void updateDynamics() {
   bool mv = motionFresh();
   Y.plot.setSample(g_vs.motion.latG, g_vs.motion.lonG, mv);
@@ -607,9 +634,7 @@ lv_obj_t *makeChart(lv_obj_t *p, int x, int y, int w, int h, int ymin, int ymax,
   lv_chart_set_point_count(ch, 120);
   lv_chart_set_range(ch, LV_CHART_AXIS_PRIMARY_Y, ymin, ymax);
   lv_chart_set_update_mode(ch, LV_CHART_UPDATE_MODE_SHIFT);
-  lv_chart_set_div_line_count(ch, 3, 0);
-  lv_obj_set_style_line_color(ch, c(LINE), LV_PART_MAIN);
-  lv_obj_set_style_line_width(ch, 1, LV_PART_MAIN);
+  lv_chart_set_div_line_count(ch, 0, 0);
   lv_obj_set_style_line_width(ch, 3, LV_PART_ITEMS);
   lv_obj_set_style_size(ch, 0, LV_PART_INDICATOR);
   *ser = lv_chart_add_series(ch, c(color), LV_CHART_AXIS_PRIMARY_Y);
@@ -629,9 +654,19 @@ struct {
 } B;
 
 lv_obj_t *statCol(lv_obj_t *p, int x, const char *cap, lv_obj_t **val) {
-  caption(p, x, 8, cap);
-  *val = label(p, &inter_md_30, FG, x, 28, "—");
+  caption(p, x, yForBaseline(&inter_rg_16, 24), cap);
+  *val = blabel(p, &inter_md_30, FG, x, 58, "—");
   return *val;
+}
+// Chart frame: axis labels centred on the exact value lines, which we draw ourselves.
+void chartFrame(lv_obj_t *p, const char *unit, const char *const *names, const int *lineY, int n) {
+  brlabel(p, &inter_rg_14, MUTED, 60, 84, 40, unit);
+  for (int i = 0; i < n; i++) {
+    brlabel(p, &inter_rg_14, MUTED, 60, lineY[i] + 5, 40, names[i]);
+    rule(p, 70, lineY[i], 710);
+  }
+  blabel(p, &inter_rg_14, MUTED, 70, 252, "−10 min");
+  brlabel(p, &inter_rg_14, MUTED, 780, 252, 60, "now");
 }
 lv_obj_t *noData(lv_obj_t *p) {
   lv_obj_t *o = panel(p, 300, 150, 200, 56, PANEL, 10);
@@ -644,19 +679,15 @@ lv_obj_t *noData(lv_obj_t *p) {
 }
 void buildEnergy(lv_obj_t *p) {
   statCol(p, 20, "TRIP AVERAGE", &E.avg);
-  statCol(p, 213, "NET ENERGY", &E.net);
-  statCol(p, 406, "RECOVERED", &E.rec);
-  statCol(p, 599, "SOC USED", &E.soc);
-  label(p, &inter_rg_14, MUTED, 40, 90, "kW");
-  label(p, &inter_rg_14, MUTED, 20, 112, "+100");
-  label(p, &inter_rg_14, MUTED, 20, 158, "0");
-  label(p, &inter_rg_14, MUTED, 20, 204, "−50");
+  statCol(p, 215, "NET ENERGY", &E.net);
+  statCol(p, 410, "RECOVERED", &E.rec);
+  statCol(p, 605, "SOC USED", &E.soc);
+  // range -50..100 over y 100..230: +100 at 100, 0 at 187, -50 at 230
+  static const char *names[3] = {"+100", "0", "−50"};
+  static const int lines[3] = {100, 187, 230};
+  chartFrame(p, "kW", names, lines, 3);
   E.chart = makeChart(p, 70, 100, 710, 130, -50, 100, &E.ser, LIME);
-  rule(p, 70, 230, 710);
-  label(p, &inter_rg_14, MUTED, 70, 236, "−10 min");
-  lv_obj_t *now = label(p, &inter_rg_14, MUTED, 0, 236, "now");
-  lv_obj_align(now, LV_ALIGN_TOP_RIGHT, -20, 236);
-  E.note = label(p, &inter_rg_16, MUTED, 20, 262, "Battery power, last 10 min · above the line draws, below recovers · Wh/km shown only above 15 km/h");
+  E.note = blabel(p, &inter_rg_16, MUTED, 20, 278, "Battery power, last 10 min · above the line draws, below recovers · Wh/km shown only above 15 km/h");
   E.nodata = noData(p);
 }
 void updateEnergy() {
@@ -676,22 +707,19 @@ void buildBattery(lv_obj_t *p) {
   statCol(p, 200, "CURRENT", &B.a);
   statCol(p, 360, "PACK TEMP MIN · AVG · MAX", &B.temp);
   statCol(p, 630, "CELL SPREAD", &B.spread);
-  label(p, &inter_rg_14, MUTED, 40, 90, "°C");
-  label(p, &inter_rg_14, MUTED, 20, 112, "40");
-  label(p, &inter_rg_14, MUTED, 20, 158, "25");
-  label(p, &inter_rg_14, MUTED, 20, 204, "10");
+  // range 10..40 over y 100..230: 40 at 100, 25 at 165, 10 at 230
+  static const char *names[3] = {"40", "25", "10"};
+  static const int lines[3] = {100, 165, 230};
+  chartFrame(p, "°C", names, lines, 3);
   B.chart = makeChart(p, 70, 100, 710, 130, 10, 40, &B.ser, LIME);
-  rule(p, 70, 230, 710);
-  label(p, &inter_rg_14, MUTED, 70, 236, "−10 min");
-  lv_obj_t *now = label(p, &inter_rg_14, MUTED, 0, 236, "now");
-  lv_obj_align(now, LV_ALIGN_TOP_RIGHT, -20, 236);
   rule(p, 20, 266, 760);
-  label(p, &inter_rg_16, MUTED, 20, 286, "Cells avg / min / max");
-  B.cells = label(p, &inter_md_26, FG, 190, 280, "—");
-  label(p, &inter_rg_16, MUTED, 466, 286, "12 V");
-  B.v12 = label(p, &inter_md_26, FG, 506, 280, "—");
-  label(p, &inter_rg_16, MUTED, 616, 286, "BMS health");
-  B.soh = rlabel(p, &inter_md_26, FG, 780, 280, 72, "—");
+  // footer: three cells on baseline 306
+  blabel(p, &inter_rg_16, MUTED, 20, 306, "Cells avg / min / max");
+  B.cells = blabel(p, &inter_md_26, FG, 190, 306, "—");
+  blabel(p, &inter_rg_16, MUTED, 466, 306, "12 V");
+  B.v12 = blabel(p, &inter_md_26, FG, 506, 306, "—");
+  blabel(p, &inter_rg_16, MUTED, 616, 306, "BMS health");
+  B.soh = brlabel(p, &inter_md_26, FG, 780, 306, 72, "—");
   B.nodata = noData(p);
 }
 void updateBattery() {
@@ -758,13 +786,13 @@ void clearRecordsCb(lv_event_t *) {
 }
 lv_obj_t *settingRow(lv_obj_t *p, int col, int row, const char *name) {
   int x = col == 0 ? 20 : 414, y = 8 + row * 44;
-  label(p, &inter_rg_18, FG, x, y + 10, name);
+  blabel(p, &inter_rg_18, FG, x, y + 28, name);
   rule(p, x, y + 42, 366);
   return p;
 }
 lv_obj_t *rowValue(lv_obj_t *p, int col, int row, const char *text, uint32_t color = MUTED) {
   int y = 8 + row * 44;
-  return rlabel(p, &inter_rg_16, color, col == 0 ? 386 : 780, y + 12, 250, text);
+  return brlabel(p, &inter_rg_16, color, col == 0 ? 386 : 780, y + 28, 250, text);
 }
 void buildSettings(lv_obj_t *p) {
   static const char *NIGHT[3] = {"Auto", "On", "Off"};
@@ -844,21 +872,20 @@ void buildShell() {
   H.header = box(H.scr, 0, 0, 800, HEADER_H);
   lv_obj_add_flag(H.header, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(H.header, headerCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *brand = label(H.header, &inter_sb_16, FG, 20, 16, "MINI");
+  lv_obj_t *brand = blabel(H.header, &inter_sb_16, FG, 20, 32, "MINI");
   lv_obj_set_style_text_letter_space(brand, 3, 0);
-  lv_obj_t *model = label(H.header, &inter_sb_16, LIME, 82, 16, "COOPER SE");
+  lv_obj_t *model = blabel(H.header, &inter_sb_16, LIME, 82, 32, "COOPER SE");
   lv_obj_set_style_text_letter_space(model, 2, 0);
   rule(H.scr, 0, HEADER_H - 1, 800);
-  H.clock = rlabel(H.header, &inter_rg_18, FG, 780, 14, 70, "--:--");
-  H.night = rlabel(H.header, &inter_rg_16, MUTED, 706, 16, 50, "day");
+  H.clock = brlabel(H.header, &inter_rg_18, FG, 780, 32, 70, "--:--");
+  H.night = brlabel(H.header, &inter_rg_16, MUTED, 706, 32, 50, "day");
   H.obd = pill(H.header, 0, 13, "OBD OFF", MUTED);
   H.obdL = buttonLabel(H.obd);
   lv_obj_align(H.obd, LV_ALIGN_TOP_RIGHT, -150, 13);
-  H.gps = rlabel(H.header, &inter_rg_16, MUTED, 538, 16, 130, "GPS —");
+  H.gps = brlabel(H.header, &inter_rg_16, MUTED, 538, 32, 130, "GPS —");
   H.demo = pill(H.header, 0, 13, "DEMO", AMBER);
   lv_obj_align(H.demo, LV_ALIGN_TOP_RIGHT, -352, 13);
-  H.back = label(H.header, &inter_rg_16, MUTED, 0, 16, "← back");
-  lv_obj_align(H.back, LV_ALIGN_TOP_RIGHT, -440, 16);
+  H.back = brlabel(H.header, &inter_rg_16, MUTED, 360, 32, 80, "← back");
   show(H.back, false);
 
   H.content = box(H.scr, 0, HEADER_H, 800, CONTENT_H);
@@ -882,7 +909,9 @@ void buildShell() {
     lv_obj_add_event_cb(t, tabCb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     lv_obj_t *l = label(t, &inter_rg_16, MUTED, 0, 0, TAB_NAMES[i]);
     lv_obj_set_style_text_letter_space(l, 2, 0);
-    lv_obj_center(l);
+    lv_obj_set_width(l, 160);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_y(l, yForBaseline(&inter_rg_16, 38));
     H.tab[i] = t;
     H.tabInd[i] = panel(t, 0, 0, 160, 3, LIME, 0);
   }

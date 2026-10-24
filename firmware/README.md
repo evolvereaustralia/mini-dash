@@ -36,6 +36,10 @@ python3 firmware/tools/screenshot.py /dev/cu.usbmodem1101 shot.png --key Y
 
 LVGL 8.4 renders dirty areas in partial mode into a 40-row draw buffer in internal RAM; each flushed chunk is copied into the back framebuffer in PSRAM; on the last chunk the panel is told to switch to that buffer, we wait for the frame-complete event, then copy the same rows into the new back buffer so the two stay identical. No tearing, no full-screen redraw. LVGL's hot draw routines are placed in IRAM (`LV_ATTRIBUTE_FAST_MEM`). Measured 24 Oct 2026 on Drive with the demo running: about 55 ms of render per frame, one frame per 100 ms tick, longest I2C hold 24 ms. Two earlier approaches were measured and dropped: direct mode into the PSRAM framebuffers (about 150 ms of per-pixel blending per frame) and a canvas-only G plot redrawn every tick (whole-plot invalidation each frame). The remaining cost is dominated by anti-aliased text and lines; the 30 fps target in CLAUDE.md section 7 of the handoff is not met yet and the tick stays at 10 Hz until it is.
 
+### Layout rules in the UI code
+
+Text is placed by baseline, never by box top: `Theme::blabel` and `brlabel` take a baseline and derive the y from the font's `line_height` and `base_line`. This matters because lv_font_conv sizes a face's line box from the glyphs it contains, so the digit-only 88 and 60 px faces have 1 px of baseline and no leading while the text faces carry 4 to 9 px; placing them by box top put the big digits straight onto the captions above them (seen on the bench, 24 Oct 2026). Labels whose text changes are fixed-width and right-aligned where they end at a column edge, so updating them never moves them. Each page keeps a small baseline grid, noted at the top of its build function; columns start at x 20 and end at x 780, the Drive plot is centred on x 400, chart axis labels are centred on value lines the page draws itself.
+
 ### Layout
 
 ```

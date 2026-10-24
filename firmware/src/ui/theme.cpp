@@ -42,6 +42,16 @@ lv_obj_t *rlabel(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int ri
   return l;
 }
 
+int yForBaseline(const lv_font_t *font, int baseline) { return baseline - (font->line_height - font->base_line); }
+
+lv_obj_t *blabel(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int x, int baseline, const char *text) {
+  return label(parent, font, color, x, yForBaseline(font, baseline), text);
+}
+
+lv_obj_t *brlabel(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int rightX, int baseline, int width, const char *text) {
+  return rlabel(parent, font, color, rightX, yForBaseline(font, baseline), width, text);
+}
+
 lv_obj_t *caption(lv_obj_t *parent, int x, int y, const char *text, const lv_font_t *font) {
   lv_obj_t *l = label(parent, font, MUTED, x, y, text);
   lv_obj_set_style_text_letter_space(l, 1, 0);

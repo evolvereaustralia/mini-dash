@@ -49,6 +49,12 @@ lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int x, 
 // Fixed-width label whose text is right-aligned, ending at rightX. Updating its text never
 // moves it, so a tick invalidates only when the text changes.
 lv_obj_t *rlabel(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int rightX, int y, int width, const char *text);
+// Baseline placement. LVGL draws a label's baseline at y + line_height - base_line, and the
+// converted digit-only faces (88, 60) have almost no leading while the text faces do, so
+// positioning by box top misaligns mixed sizes. These place text by baseline instead.
+int yForBaseline(const lv_font_t *font, int baseline);
+lv_obj_t *blabel(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int x, int baseline, const char *text);
+lv_obj_t *brlabel(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int rightX, int baseline, int width, const char *text);
 // Uppercase, letter-spaced label in the muted colour (the design's "label" class).
 lv_obj_t *caption(lv_obj_t *parent, int x, int y, const char *text, const lv_font_t *font = &inter_rg_16);
 // A 1 px horizontal rule in the line colour.
