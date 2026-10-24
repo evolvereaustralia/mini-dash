@@ -105,4 +105,10 @@ constexpr int PIN_I2S_DOUT = 15, PIN_I2S_DIN = 43;                   // (GPIO15/
 // ---------------------------------------------------------------------------------------
 constexpr uint8_t GPS_NAV_RATE_HZ = 10;
 constexpr uint16_t IMU_ODR_HZ = 208;
+// Nominal forward axis of the car in the IMU's frame once the board is screwed into the shell
+// (CLAUDE.md section 6: board X along the connector edge, Y along the header edge; the shell
+// mounts the board with Y pointing forward). Pitch and roll of the mount are handled by the
+// attitude filter; only this axis and its sign matter, and the sign is confirmed on the first
+// drive (acceleration must read positive).
+constexpr float IMU_FORWARD_SENSOR[3] = {0.0f, 1.0f, 0.0f};
 constexpr uint16_t LUX_PERIOD_MS = 1000;

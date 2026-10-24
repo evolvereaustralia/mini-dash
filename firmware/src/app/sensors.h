@@ -3,9 +3,10 @@
 // lux reading with hysteresis (under 15 lux for 5 s enters, over 40 lux for 5 s exits) and
 // the backlight through the IO expander.
 //
-// Attitude in this phase: a static gravity reference taken while stationary (the mounting
-// calibration) and a 5 Hz low-pass for the display path. The gyro-propagated quaternion of
-// section 5 replaces the static reference in the next step; the interfaces do not change.
+// Attitude: the gyro-propagated quaternion of section 5 (attitude.h), seeded by the stored
+// mounting reference, corrected toward gravity only at rest or in steady motion; vehicle-frame
+// G from it and a 5 Hz low-pass for the display path. Displayed speed is GPS fused with the
+// integrated longitudinal acceleration (speed_fusion.h); the timers get raw GPS.
 #pragma once
 
 #include <stdint.h>
@@ -34,5 +35,7 @@ void setBrightness(uint8_t percent);
 // GPS poll diagnostics since the last call: longest poll, the receiver backlog in bytes seen
 // before it, NMEA bytes received in total (should stay 0), and the average poll time.
 void gpsStats(uint32_t *pollMaxMs, uint32_t *backlogAtMax, uint32_t *nmeaBytes, uint32_t *pollAvgMs);
+// Polls the receiver refused by stretching the clock past the chip's timeout (since boot).
+uint32_t gpsRefusedReads();
 
 }  // namespace Sensors

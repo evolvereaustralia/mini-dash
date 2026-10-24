@@ -248,9 +248,9 @@ void TripEngine::checkPower(uint32_t nowMs, float powerKw, bool carLive, bool mo
   }
 }
 
-void TripEngine::update(uint32_t nowMs, float speedKph, bool speedValid, float speedAccMps, uint8_t sats,
-                        float latG, float lonG, bool motionValid, float powerKw, bool carLive,
-                        float socPct, float packTemp, float altM) {
+void TripEngine::update(uint32_t nowMs, float speedKph, bool speedValid, float timingKph, bool timingValid,
+                        float speedAccMps, uint8_t sats, float latG, float lonG, bool motionValid,
+                        float powerKw, bool carLive, float socPct, float packTemp, float altM) {
   if (lastMs_ == 0) lastMs_ = nowMs;
   float dtS = (float)(nowMs - lastMs_) / 1000.0f;
   if (dtS < 0) dtS = 0;
@@ -288,7 +288,7 @@ void TripEngine::update(uint32_t nowMs, float speedKph, bool speedValid, float s
     }
   }
 
-  checkSpeedTimers(nowMs, speedKph, speedValid, lonG, speedAccMps, sats, socPct, packTemp);
+  checkSpeedTimers(nowMs, timingKph, timingValid, lonG, speedAccMps, sats, socPct, packTemp);
   checkPower(nowMs, powerKw, carLive, moving, socPct, packTemp);
   traceSample(nowMs, speedValid ? speedKph : 0, motionValid ? latG : 0, motionValid ? lonG : 0, carLive ? powerKw : 0);
   flushEvents(nowMs);

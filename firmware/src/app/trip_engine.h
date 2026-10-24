@@ -30,10 +30,12 @@ class TripEngine {
   void startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc);
   void reset(uint32_t nowMs) { startTrip(tripId_, nowMs, startUtc_); }
 
-  // One update with whatever is fresh. speedValid false means the timers invalidate.
-  void update(uint32_t nowMs, float speedKph, bool speedValid, float speedAccMps, uint8_t sats,
-              float latG, float lonG, bool motionValid, float powerKw, bool carLive, float socPct,
-              float packTemp, float altM);
+  // One update with whatever is fresh. speedKph is the displayed (fused or wheel) speed and
+  // integrates the trip; timingKph is the raw GPS sample the timers run on (CLAUDE.md section
+  // 5, path 2), and timingValid false invalidates a run in progress.
+  void update(uint32_t nowMs, float speedKph, bool speedValid, float timingKph, bool timingValid,
+              float speedAccMps, uint8_t sats, float latG, float lonG, bool motionValid, float powerKw,
+              bool carLive, float socPct, float packTemp, float altM);
 
   // Writes trip, motion peaks and the three record sets into the state (caller holds the lock).
   void publish(VehicleState &vs) const;

@@ -158,7 +158,7 @@ void demoTask(void *) {
       vs.disp.speedSource = SpeedSource::Wheels;
       (void)clock;
       if (g_engine) {
-        g_engine->update(now, kph, true, 0.12f, 11, latG, lonG, true, power, true, g_soc, g_packTemp, 48.0f);
+        g_engine->update(now, kph, true, kph, true, 0.12f, 11, latG, lonG, true, power, true, g_soc, g_packTemp, 48.0f);
         g_engine->publish(vs);
       }
     }

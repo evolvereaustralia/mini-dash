@@ -110,6 +110,10 @@ struct Diagnostics {
   float gpsHz = 0, imuHz = 0, obdHz = 0;
   bool touchOk = false;
   char touchId[5] = "";
+  // Attitude filter: sensor tilt from level, the correction applied per sample (settles near
+  // zero), the learnt gyro bias magnitude and the longitudinal residual learnt at standstill.
+  float attTiltDeg = 0, attCorrDeg = 0, gyroBiasDps = 0, lonBiasG = 0;
+  bool attTrust = false, attStationary = false;
 };
 
 // What the storage layer knows, for the Trip scopes and the Settings page.
