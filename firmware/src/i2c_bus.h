@@ -34,7 +34,7 @@ size_t scan(uint8_t *found, size_t maxFound);
 // RAII guard. Construct, test ok, use Wire, let it fall out of scope.
 class I2cLock {
  public:
-  explicit I2cLock(uint32_t timeoutMs = 50);
+  explicit I2cLock(uint32_t timeoutMs = 50, const char *who = "?");
   ~I2cLock();
   bool ok() const { return held_; }
   I2cLock(const I2cLock &) = delete;
@@ -43,4 +43,11 @@ class I2cLock {
  private:
   bool held_;
   uint32_t takenAt_;
+  const char *who_;
 };
+// Who held the bus longest, for the diagnostics line; and a mute for the hold warnings while
+// the serial port carries a screenshot dump (other tasks' prints interleave into it).
+namespace I2cBus {
+const char *longestHolder();
+void setQuiet(bool quiet);
+}

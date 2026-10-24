@@ -33,4 +33,11 @@ One line of reasoning per decision, dated. Newest at the bottom. Hardware and ar
 - 2026-10-24: A labelled demo replay mode is built first in phase 3b, isolated from records, so the UI can be developed and reviewed on the bench without driving.
 - 2026-10-24: The device is switched off whenever the car is parked or charging (powered only from the car's USB-C, no battery, no sleep mode). So a trip is one power cycle, checkpointed every 30 s, and the Charge tab is dropped: five tabs of 160 px, Drive, Trip, Dynamics, Energy, Battery.
 - 2026-10-24: Splash artwork is the MINI wings emblem Logan supplied, lifted off its white background by a flood fill from the corners (the emblem has a continuous dark outline, so the white ring inside survives), stored in docs/design/assets at 420 px wide with transparency.
+- 2026-10-24: Display pipeline: LVGL partial rendering into a 40-row internal-RAM buffer, chunks copied into the back PSRAM framebuffer, swap on the last chunk, dirty rows synced to the new back buffer. Direct mode into PSRAM cost about 150 ms a frame of per-pixel blending; this costs about 55 ms. No tearing either way.
+- 2026-10-24: The G plot keeps only the static layer and the density cloud on a canvas (redrawn at most once a second); trail, vector, dot and peak markers are LVGL objects, so a tick invalidates small areas rather than the whole plot.
+- 2026-10-24: Labels whose text changes every tick are fixed-width and right-aligned instead of re-aligned each tick; re-aligning invalidated them every frame even when nothing changed.
+- 2026-10-24: LVGL's hot draw code goes in IRAM (LV_ATTRIBUTE_FAST_MEM = IRAM_ATTR); internal heap after boot is about 94 KB, watched.
+- 2026-10-24: Inter's tabular digits are made the default digits by rewriting the font's cmap through the tnum GSUB lookups with fontTools, because lv_font_conv does not apply OpenType features.
+- 2026-10-24: The UI tick is 10 Hz; frames follow the tick. The handoff's 30 fps target waits on cheaper rendering of anti-aliased text and lines.
+- 2026-10-24: Demo replay is on by default while phase 3b is under way (bench use); it is labelled DEMO in the header and resets the trip when switched.
 

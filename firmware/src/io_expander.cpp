@@ -12,7 +12,7 @@ uint8_t g_outputShadow = 0xFF;
 namespace IoExpander {
 
 bool writeReg(uint8_t reg, uint8_t value) {
-  I2cLock guard;
+  I2cLock guard(50, "expander");
   if (!guard.ok()) return false;
   Wire.beginTransmission(I2C_ADDR_IO_EXPANDER);
   Wire.write(reg);
@@ -21,7 +21,7 @@ bool writeReg(uint8_t reg, uint8_t value) {
 }
 
 bool readReg(uint8_t reg, uint8_t *value, uint8_t len) {
-  I2cLock guard;
+  I2cLock guard(50, "expander");
   if (!guard.ok()) return false;
   Wire.beginTransmission(I2C_ADDR_IO_EXPANDER);
   Wire.write(reg);

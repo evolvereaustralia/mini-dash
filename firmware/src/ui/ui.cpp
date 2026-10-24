@@ -1,0 +1,992 @@
+#include "ui.h"
+
+#include <Arduino.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "gplot.h"
+#include "theme.h"
+#include "vehicle_state.h"
+
+using namespace Theme;
+
+namespace {
+
+Ui::Callbacks g_cb;
+const char *g_version = "";
+uint32_t g_bootMs = 0;
+bool g_shellShown = false;
+lv_timer_t *g_tick = nullptr;
+VehicleState g_vs;  // the snapshot the tick works on
+uint32_t g_now = 0;
+uint32_t g_tickMaxMs = 0, g_plotMaxMs = 0;
+
+// Settings state mirrored in the UI.
+int g_nightMode = -1;
+bool g_demo = true;
+bool g_units_mph = false;
+Ui::Page g_page = Ui::PAGE_DRIVE;
+Ui::Page g_pageBeforeSettings = Ui::PAGE_DRIVE;
+
+// ---- helpers ------------------------------------------------------------------------------
+bool setText(lv_obj_t *l, const char *s) {
+  if (l == nullptr) return false;
+  if (strcmp(lv_label_get_text(l), s) == 0) return false;
+  lv_label_set_text(l, s);
+  return true;
+}
+bool setTextF(lv_obj_t *l, const char *fmt, ...) {
+  char buf[96];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return setText(l, buf);
+}
+void setColor(lv_obj_t *l, uint32_t color) {
+  if (l == nullptr) return;
+  if (lv_color_to32(lv_obj_get_style_text_color(l, 0)) != lv_color_to32(c(color))) lv_obj_set_style_text_color(l, c(color), 0);
+}
+void show(lv_obj_t *o, bool on) {
+  if (o == nullptr) return;
+  bool hidden = lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN);
+  if (on && hidden) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+  else if (!on && !hidden) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+void setBorder(lv_obj_t *o, uint32_t color) {
+  if (o == nullptr) return;
+  if (lv_color_to32(lv_obj_get_style_border_color(o, 0)) != lv_color_to32(c(color))) lv_obj_set_style_border_color(o, c(color), 0);
+}
+bool fresh(uint32_t stamp, uint32_t maxAge) { return stamp != 0 && g_now - stamp < maxAge; }
+bool carFast() { return g_vs.car.linked && !g_vs.car.asleep && fresh(g_vs.car.fastStampMs, STALE_OBD_FAST_MS); }
+bool carSlow() { return g_vs.car.linked && !g_vs.car.asleep && fresh(g_vs.car.slowStampMs, STALE_OBD_SLOW_MS); }
+bool gpsFresh() { return fresh(g_vs.gps.stampMs, STALE_GPS_MS) && g_vs.gps.fixOk; }
+bool motionFresh() { return fresh(g_vs.motion.stampMs, STALE_IMU_MS); }
+float kphToDisplay(float kph) { return g_units_mph ? kph * 0.621371f : kph; }
+const char *speedUnit() { return g_units_mph ? "mph" : "km/h"; }
+
+// A value label that greys out and shows a dash when invalid.
+void setValue(lv_obj_t *l, bool valid, const char *fmt, float v) {
+  if (!valid) {
+    setText(l, "—");
+    setColor(l, MUTED);
+  } else {
+    setTextF(l, fmt, v);
+    setColor(l, FG);
+  }
+}
+
+lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h, const char *text, const lv_font_t *font,
+                 uint32_t fg, uint32_t bg, lv_event_cb_t cb, void *user) {
+  lv_obj_t *b = panel(parent, x, y, w, h, bg, 8);
+  lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *l = label(b, font, fg, 0, 0, text);
+  lv_obj_center(l);
+  if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+  return b;
+}
+lv_obj_t *buttonLabel(lv_obj_t *b) { return lv_obj_get_child(b, 0); }
+
+// Segmented control: n options, one highlighted. Returns the container; children are options.
+struct Segmented {
+  lv_obj_t *box = nullptr;
+  lv_obj_t *opt[3] = {};
+  int count = 0;
+  void select(int i) {
+    for (int k = 0; k < count; k++) {
+      bool on = k == i;
+      lv_obj_set_style_bg_color(opt[k], c(on ? FG : PANEL), 0);
+      lv_obj_set_style_text_color(buttonLabel(opt[k]), c(on ? BG : MUTED), 0);
+    }
+  }
+};
+Segmented segmented(lv_obj_t *parent, int x, int y, int optW, int h, const char *const *names, int n,
+                    lv_event_cb_t cb, const lv_font_t *font = &inter_rg_16) {
+  Segmented s;
+  s.count = n;
+  s.box = panel(parent, x, y, optW * n + 6, h, PANEL, 9);
+  for (int i = 0; i < n; i++) {
+    s.opt[i] = button(s.box, 3 + i * optW, 3, optW - 2, h - 6, names[i], font, MUTED, PANEL, cb, (void *)(intptr_t)i);
+    lv_obj_set_style_radius(s.opt[i], 7, 0);
+  }
+  return s;
+}
+
+// ---- splash -------------------------------------------------------------------------------
+struct {
+  lv_obj_t *scr = nullptr, *gps = nullptr, *obd = nullptr, *imu = nullptr, *clock = nullptr;
+} S;
+
+void buildSplash() {
+  S.scr = lv_scr_act();
+  lv_obj_remove_style_all(S.scr);
+  lv_obj_set_style_bg_color(S.scr, c(BG), 0);
+  lv_obj_set_style_bg_opa(S.scr, LV_OPA_COVER, 0);
+  // Faint G-plot rings top right.
+  lv_obj_t *ring1 = box(S.scr, 800 - 400, -170, 540, 540);
+  lv_obj_set_style_radius(ring1, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_border_width(ring1, 1, 0);
+  lv_obj_set_style_border_color(ring1, c(LINE), 0);
+  lv_obj_set_style_border_opa(ring1, LV_OPA_60, 0);
+  lv_obj_t *ring2 = box(S.scr, 800 - 400 + 135, -170 + 135, 270, 270);
+  lv_obj_set_style_radius(ring2, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_border_width(ring2, 1, 0);
+  lv_obj_set_style_border_color(ring2, c(LINE), 0);
+  lv_obj_set_style_border_opa(ring2, LV_OPA_60, 0);
+  lv_obj_t *dot = panel(S.scr, 800 - 400 + 270 + 95, -170 + 270 - 40, 12, 12, LIME, LV_RADIUS_CIRCLE);
+  (void)dot;
+
+  lv_obj_t *img = lv_img_create(S.scr);
+  lv_img_set_src(img, &img_mini_wings);
+  lv_obj_set_pos(img, (800 - 420) / 2, 120);
+  lv_obj_t *model = label(S.scr, &inter_sb_26, MUTED, 0, 310, "COOPER SE");
+  lv_obj_set_style_text_letter_space(model, 9, 0);
+  lv_obj_set_width(model, 800);
+  lv_obj_set_style_text_align(model, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_t *rl = panel(S.scr, (800 - 220) / 2, 362, 220, 4, LIME, 2);
+  (void)rl;
+
+  S.gps = label(S.scr, &inter_rg_16, MUTED, 20, 448, "GPS starting");
+  S.obd = label(S.scr, &inter_rg_16, MUTED, 300, 448, "OBD off");
+  S.imu = label(S.scr, &inter_rg_16, MUTED, 520, 448, "IMU starting");
+  S.clock = label(S.scr, &inter_rg_16, MUTED, 0, 448, "");
+  lv_obj_set_width(S.clock, 780);
+  lv_obj_set_style_text_align(S.clock, LV_TEXT_ALIGN_RIGHT, 0);
+}
+
+// ---- shell: header, content, tab bar --------------------------------------------------------
+struct {
+  lv_obj_t *scr = nullptr, *header = nullptr, *content = nullptr, *tabbar = nullptr;
+  lv_obj_t *gps = nullptr, *obd = nullptr, *obdL = nullptr, *demo = nullptr, *night = nullptr, *clock = nullptr;
+  lv_obj_t *back = nullptr;
+  lv_obj_t *tab[Ui::PAGE_COUNT] = {};
+  lv_obj_t *tabInd[Ui::PAGE_COUNT] = {};
+  lv_obj_t *page[Ui::PAGE_COUNT + 2] = {};  // + settings
+} H;
+const char *TAB_NAMES[Ui::PAGE_COUNT] = {"DRIVE", "TRIP", "DYNAMICS", "ENERGY", "BATTERY"};
+
+// ---- Drive -----------------------------------------------------------------------------------
+struct {
+  lv_obj_t *srcPill = nullptr, *srcL = nullptr, *speed = nullptr, *sub = nullptr;
+  lv_obj_t *power = nullptr, *pFill = nullptr, *pWord = nullptr;
+  lv_obj_t *soc = nullptr, *socPct = nullptr, *socWin = nullptr, *socFill = nullptr;
+  lv_obj_t *range = nullptr, *packLine = nullptr;
+  lv_obj_t *combined = nullptr, *trip = nullptr, *bestBtn = nullptr, *bestName = nullptr, *bestVal = nullptr;
+  GPlot plot;
+} D;
+constexpr int PBAR_W = 200;
+constexpr float PBAR_ZERO = 0.285f;  // 60 kW regen left of zero, 150 kW draw right
+const char *BEST_NAMES[REC_COUNT] = {"Best 0–60", "Best 0–100", "Best 100–0", "Lateral best", "Peak draw", "Peak regen"};
+const char *BEST_FMT[REC_COUNT] = {"%.1f s", "%.1f s", "%.1f s", "%.2f g", "%.1f kW", "%.1f kW"};
+
+void bestNextCb(lv_event_t *) {
+  VsLock lk;
+  if (!lk.ok()) return;
+  Vs::raw().disp.bestField = (Vs::raw().disp.bestField + 1) % REC_COUNT;
+}
+
+void buildDrive(lv_obj_t *p) {
+  // left column
+  caption(p, 20, 8, "SPEED");
+  D.srcPill = pill(p, 92, 6, "GPS", MUTED);
+  D.srcL = buttonLabel(D.srcPill);
+  D.speed = label(p, &inter_md_88, FG, 16, 24, "—");
+  D.sub = label(p, &inter_rg_16, MUTED, 20, 124, "km/h");
+  caption(p, 20, 156, "BATTERY POWER");
+  D.power = label(p, &inter_md_30, FG, 20, 176, "—");
+  lv_obj_t *track = panel(p, 20, 220, PBAR_W, 10, LINE, 3);
+  D.pFill = panel(track, (int)(PBAR_W * PBAR_ZERO), 0, 0, 10, LIME, 0);
+  lv_obj_t *zero = panel(track, (int)(PBAR_W * PBAR_ZERO) - 1, -2, 2, 14, FG, 0);
+  (void)zero;
+  label(p, &inter_rg_14, MUTED, 20, 236, "−60");
+  label(p, &inter_rg_14, MUTED, 20 + (int)(PBAR_W * PBAR_ZERO) - 4, 236, "0");
+  lv_obj_t *r150 = label(p, &inter_rg_14, MUTED, 20 + PBAR_W - 52, 236, "+150 kW");
+  (void)r150;
+  D.pWord = label(p, &inter_rg_16, MUTED, 20, 256, "No car data");
+
+  // centre
+  D.plot.create(p, 255, 2, 290);
+
+  // right column, right aligned at x = 780
+  lv_obj_t *l;
+  l = caption(p, 0, 8, "STATE OF CHARGE");
+  lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -20, 8);
+  D.soc = rlabel(p, &inter_md_60, FG, 748, 26, 140, "—");
+  D.socPct = label(p, &inter_md_28, MUTED, 0, 54, "%");
+  lv_obj_align(D.socPct, LV_ALIGN_TOP_RIGHT, -20, 54);
+  lv_obj_t *strack = panel(p, 580, 100, 200, 10, LINE, 3);
+  D.socWin = panel(strack, 0, 0, 200, 10, PANEL2, 3);
+  D.socFill = panel(strack, 0, 0, 0, 10, LIME, 3);
+  l = label(p, &inter_rg_16, MUTED, 0, 116, "Displayed SOC");
+  lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -20, 116);
+  l = caption(p, 0, 150, "RANGE · CAR");
+  lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -20, 150);
+  D.range = rlabel(p, &inter_md_30, FG, 780, 170, 200, "—");
+  D.packLine = rlabel(p, &inter_rg_16, MUTED, 780, 206, 300, "Pack — · 12 V —");
+
+  // footer
+  rule(p, 20, 304, 760);
+  label(p, &inter_rg_16, MUTED, 20, 324, "Combined G");
+  D.combined = label(p, &inter_md_26, FG, 118, 318, "—");
+  label(p, &inter_rg_16, MUTED, 320, 324, "Trip");
+  D.trip = label(p, &inter_md_26, FG, 358, 318, "—");
+  D.bestBtn = box(p, 540, 308, 240, 52);
+  lv_obj_add_flag(D.bestBtn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(D.bestBtn, bestNextCb, LV_EVENT_CLICKED, nullptr);
+  D.bestName = rlabel(D.bestBtn, &inter_rg_16, MUTED, 110, 16, 110, "Lateral best");
+  D.bestVal = rlabel(D.bestBtn, &inter_md_26, LIME, 214, 10, 100, "—");
+  lv_obj_t *cyc = label(D.bestBtn, &inter_rg_18, MUTED, 222, 14, "↻");
+  (void)cyc;
+}
+
+void updateDrive() {
+  bool live = carFast();
+  bool wheels = live && g_vs.disp.speedSource == SpeedSource::Wheels;
+  bool haveSpeed = g_vs.disp.speedSource != SpeedSource::None;
+  setText(D.srcL, wheels ? "WHEELS" : "GPS");
+  uint32_t srcColor = wheels ? LIME : (gpsFresh() ? MUTED : AMBER);
+  setColor(D.srcL, srcColor);
+  setBorder(D.srcPill, srcColor);
+  if (haveSpeed) {
+    setTextF(D.speed, "%d", (int)lroundf(kphToDisplay(g_vs.disp.speedKph)));
+    setColor(D.speed, FG);
+  } else {
+    setText(D.speed, "—");
+    setColor(D.speed, MUTED);
+  }
+  char hd[8];
+  const char *dirs[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+  snprintf(hd, sizeof(hd), "%s", dirs[((int)((g_vs.gps.headingDeg + 22.5f) / 45.0f)) & 7]);
+  if (wheels) setTextF(D.sub, "%s · GPS %d · %03d° %s", speedUnit(), (int)lroundf(kphToDisplay(g_vs.gps.speedMps * 3.6f)), (int)g_vs.gps.headingDeg, hd);
+  else if (gpsFresh()) setTextF(D.sub, "%s · %03d° %s", speedUnit(), (int)g_vs.gps.headingDeg, hd);
+  else setTextF(D.sub, "%s · no fix", speedUnit());
+
+  float p = g_vs.car.powerKw;
+  if (live) {
+    setTextF(D.power, "%+.1f kW", p);
+    setColor(D.power, FG);
+    setText(D.pWord, p < 0 ? "Recovering" : "Drawing");
+    int zeroX = (int)(PBAR_W * PBAR_ZERO);
+    static int lastX = -1, lastW = -1;
+    static bool lastDraw = true;
+    int x, w;
+    bool draw = p >= 0;
+    if (draw) {
+      w = (int)(fminf(p / 150.0f, 1.0f) * (PBAR_W - zeroX));
+      x = zeroX;
+    } else {
+      w = (int)(fminf(-p / 60.0f, 1.0f) * zeroX);
+      x = zeroX - w;
+    }
+    if (x != lastX || w != lastW) {
+      lv_obj_set_pos(D.pFill, x, 0);
+      lv_obj_set_width(D.pFill, w);
+      lastX = x;
+      lastW = w;
+    }
+    if (draw != lastDraw) {
+      lv_obj_set_style_bg_color(D.pFill, c(draw ? LIME : CYAN), 0);
+      lastDraw = draw;
+    }
+  } else {
+    setText(D.power, "— kW");
+    setColor(D.power, MUTED);
+    setText(D.pWord, g_vs.car.asleep ? "Car asleep" : "No car data");
+    lv_obj_set_width(D.pFill, 0);
+  }
+
+  bool slow = carSlow();
+  if (slow) {
+    setTextF(D.soc, "%d", (int)lroundf(g_vs.car.socPct));
+    setColor(D.soc, FG);
+    int x0 = (int)(g_vs.car.socMinPct * 2), x1 = (int)(g_vs.car.socMaxPct * 2);
+    lv_obj_set_pos(D.socWin, x0, 0);
+    lv_obj_set_width(D.socWin, x1 - x0);
+    lv_obj_set_pos(D.socFill, x0, 0);
+    lv_obj_set_width(D.socFill, (int)(g_vs.car.socPct * 2) - x0);
+    setTextF(D.range, "%d km", (int)lroundf(g_vs.car.rangeKm));
+    setColor(D.range, FG);
+    setTextF(D.packLine, "Pack %.0f °C avg · %.1f V", g_vs.car.tempAvg, g_vs.car.v12);
+  } else {
+    setText(D.soc, "—");
+    setColor(D.soc, MUTED);
+    lv_obj_set_width(D.socFill, 0);
+    setText(D.range, "— km");
+    setColor(D.range, MUTED);
+    setText(D.packLine, "Pack — · 12 V —");
+  }
+
+  bool mv = motionFresh();
+  D.plot.setSample(g_vs.motion.latG, g_vs.motion.lonG, mv);
+  D.plot.setPeaks(g_vs.motion.peakLeft, g_vs.motion.peakRight, g_vs.motion.peakAccel, g_vs.motion.peakBrake);
+  uint32_t tp = millis();
+  D.plot.update(g_now);
+  uint32_t dp = millis() - tp;
+  if (dp > g_plotMaxMs) g_plotMaxMs = dp;
+  setValue(D.combined, mv, "%.2f g", g_vs.motion.combinedG);
+  setValue(D.trip, g_vs.trip.energyValid && g_vs.trip.whPerKm > 0, "%.0f Wh/km", g_vs.trip.whPerKm);
+
+  int bf = g_vs.disp.bestField % REC_COUNT;
+  const Record &r = g_vs.recTrip.r[bf];
+  setText(D.bestName, BEST_NAMES[bf]);
+  if (r.valid) {
+    setTextF(D.bestVal, BEST_FMT[bf], r.value);
+    setColor(D.bestVal, LIME);
+  } else {
+    setText(D.bestVal, "—");
+    setColor(D.bestVal, MUTED);
+  }
+}
+
+// ---- Trip --------------------------------------------------------------------------------
+enum TripView { TV_RECORDS, TV_JOURNEY, TV_EVENT };
+struct {
+  lv_obj_t *title = nullptr, *ctx = nullptr;
+  Segmented scope;
+  int scopeIdx = 0;
+  TripView view = TV_RECORDS;
+  int eventIdx = 0;
+  lv_obj_t *grid = nullptr, *tile[REC_COUNT] = {}, *tVal[REC_COUNT] = {}, *tUnit[REC_COUNT] = {},
+           *tSub[REC_COUNT] = {}, *tCmp[REC_COUNT] = {};
+  lv_obj_t *strip = nullptr, *sDist = nullptr, *sEff = nullptr, *sRec = nullptr, *sSoc = nullptr, *journeyBtn = nullptr;
+  lv_obj_t *journey = nullptr, *jVal[12] = {}, *jBack = nullptr;
+  lv_obj_t *event = nullptr, *eTitle = nullptr, *eCtx = nullptr, *eMeta = nullptr, *eNote = nullptr, *eBack = nullptr;
+} T;
+const char *REC_NAMES[REC_COUNT] = {"BEST 0–60 KM/H", "BEST 0–100 KM/H", "BEST 100–0 BRAKING",
+                                    "MAX LATERAL G", "PEAK BATTERY DRAW", "PEAK BATTERY REGEN"};
+const char *REC_UNITS[REC_COUNT] = {"s", "s", "s", "g", "kW", "kW"};
+const char *REC_FMT[REC_COUNT] = {"%.1f", "%.1f", "%.1f", "%.2f", "%.1f", "%.1f"};
+const char *SCOPE_NAMES[3] = {"This trip", "Today", "All time"};
+const char *JOURNEY_NAMES[12] = {"DISTANCE", "MOVING TIME", "AVG MOVING SPEED", "MAX SPEED",
+                                 "NET ENERGY", "RECOVERED", "EFFICIENCY", "SOC USED",
+                                 "BEST 60–100", "MAX BRAKING G", "PEAK ACCEL G", "ALTITUDE"};
+
+void tripShowView(TripView v) {
+  T.view = v;
+  show(T.grid, v == TV_RECORDS);
+  show(T.strip, v == TV_RECORDS);
+  show(T.journey, v == TV_JOURNEY);
+  show(T.event, v == TV_EVENT);
+  show(T.scope.box, v != TV_EVENT);
+  setText(T.title, v == TV_EVENT ? "RECORD" : "TRIP RECORDS");
+}
+void scopeCb(lv_event_t *e) {
+  T.scopeIdx = (int)(intptr_t)lv_event_get_user_data(e);
+  T.scope.select(T.scopeIdx);
+}
+void tileCb(lv_event_t *e) {
+  T.eventIdx = (int)(intptr_t)lv_event_get_user_data(e);
+  tripShowView(TV_EVENT);
+}
+void journeyCb(lv_event_t *) { tripShowView(TV_JOURNEY); }
+void recordsCb(lv_event_t *) { tripShowView(TV_RECORDS); }
+
+void buildTrip(lv_obj_t *p) {
+  T.title = caption(p, 20, 10, "TRIP RECORDS");
+  T.ctx = label(p, &inter_rg_16, MUTED, 20, 30, "");
+  T.scope = segmented(p, 522, 8, 84, 48, SCOPE_NAMES, 3, scopeCb);
+  T.scope.select(0);
+
+  T.grid = box(p, 20, 66, 760, 232);
+  for (int i = 0; i < REC_COUNT; i++) {
+    int col = i % 3, row = i / 3;
+    lv_obj_t *t = panel(T.grid, col * 257, row * 121, 247, 111, PANEL, 10);
+    lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(t, tileCb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    T.tile[i] = t;
+    caption(t, 14, 10, REC_NAMES[i], &inter_rg_14);
+    T.tVal[i] = label(t, &inter_md_40, MUTED, 14, 28, "—");
+    T.tUnit[i] = label(t, &inter_rg_18, MUTED, 120, 48, "");
+    T.tSub[i] = label(t, &inter_rg_14, MUTED, 14, 72, "No valid run yet");
+    T.tCmp[i] = label(t, &inter_rg_14, MUTED, 14, 90, "");
+  }
+  T.strip = box(p, 20, 304, 760, 56);
+  auto kv = [&](int x, const char *cap, lv_obj_t **val) {
+    *val = label(T.strip, &inter_md_26, FG, x, 2, "—");
+    label(T.strip, &inter_rg_14, MUTED, x, 36, cap);
+  };
+  kv(0, "distance", &T.sDist);
+  kv(140, "efficiency", &T.sEff);
+  kv(320, "recovered", &T.sRec);
+  kv(478, "SOC used", &T.sSoc);
+  T.journeyBtn = button(T.strip, 606, 4, 154, 48, "Journey totals →", &inter_rg_16, FG, PANEL, journeyCb, nullptr);
+
+  T.journey = box(p, 20, 66, 760, 294);
+  for (int i = 0; i < 12; i++) {
+    int col = i % 4, row = i / 4;
+    caption(T.journey, col * 193, row * 66, JOURNEY_NAMES[i], &inter_rg_14);
+    T.jVal[i] = label(T.journey, &inter_md_30, FG, col * 193, row * 66 + 18, "—");
+  }
+  label(T.journey, &inter_rg_14, MUTED, 0, 214, "Moving time excludes stops · 60–100 is a rolling run, counted on its own");
+  T.jBack = button(T.journey, 646, 236, 114, 48, "← Records", &inter_rg_16, FG, PANEL, recordsCb, nullptr);
+  show(T.journey, false);
+
+  T.event = box(p, 20, 60, 760, 300);
+  T.eCtx = caption(T.event, 0, 0, "THIS TRIP");
+  T.eTitle = label(T.event, &inter_md_30, FG, 0, 22, "");
+  T.eMeta = label(T.event, &inter_rg_16, MUTED, 0, 70, "");
+  lv_obj_set_width(T.eMeta, 740);
+  lv_label_set_long_mode(T.eMeta, LV_LABEL_LONG_WRAP);
+  T.eNote = label(T.event, &inter_rg_14, MUTED, 0, 150, "Synchronised speed, G and battery traces for this event arrive with records storage (next step).");
+  lv_obj_set_width(T.eNote, 740);
+  lv_label_set_long_mode(T.eNote, LV_LABEL_LONG_WRAP);
+  T.eBack = button(T.event, 646, 0, 114, 48, "← Records", &inter_rg_16, FG, PANEL, recordsCb, nullptr);
+  show(T.event, false);
+}
+
+const RecordSet &scopeSet() { return T.scopeIdx == 0 ? g_vs.recTrip : T.scopeIdx == 1 ? g_vs.recToday : g_vs.recAll; }
+
+void updateTrip() {
+  const RecordSet &rs = scopeSet();
+  if (T.scopeIdx == 0) {
+    uint32_t mins = (g_now - g_vs.trip.startMs) / 60000;
+    setTextF(T.ctx, "%s · %lu min · %.1f km", g_vs.demo ? "Demo replay" : "This trip", (unsigned long)mins, g_vs.trip.distanceKm);
+  } else if (T.scopeIdx == 1) {
+    setText(T.ctx, "Today · sessions since power-on only (storage next step)");
+  } else {
+    setText(T.ctx, "Lifetime records · since power-on only (storage next step)");
+  }
+  for (int i = 0; i < REC_COUNT; i++) {
+    const Record &r = rs.r[i];
+    if (r.valid) {
+      bool moved = setTextF(T.tVal[i], REC_FMT[i], r.value);
+      setColor(T.tVal[i], FG);
+      moved |= setText(T.tUnit[i], REC_UNITS[i]);
+      if (moved) lv_obj_align_to(T.tUnit[i], T.tVal[i], LV_ALIGN_OUT_RIGHT_BOTTOM, 6, -6);
+      char sub[48];
+      switch (i) {
+        case REC_0_60:
+        case REC_0_100: snprintf(sub, sizeof(sub), "%u valid run%s · %s", r.runs, r.runs == 1 ? "" : "s", r.when); break;
+        case REC_100_0: snprintf(sub, sizeof(sub), "%.0f m · %s", r.aux, r.when); break;
+        case REC_LAT: snprintf(sub, sizeof(sub), "%s · %s", r.aux < 0 ? "left" : "right", r.when); break;
+        default: snprintf(sub, sizeof(sub), "1 s mean · max %.1f · %s", r.aux, r.when); break;
+      }
+      setText(T.tSub[i], sub);
+      if (r.hasPrevious) {
+        float d = r.value - r.previous;
+        setTextF(T.tCmp[i], "%+.*f %s vs previous", i == REC_LAT ? 2 : 1, d, REC_UNITS[i]);
+      } else {
+        setText(T.tCmp[i], T.scopeIdx == 0 ? "First of this trip" : "First recorded");
+      }
+      setColor(T.tCmp[i], r.beatLifetime ? LIME : MUTED);
+    } else {
+      setText(T.tVal[i], "—");
+      setColor(T.tVal[i], MUTED);
+      setText(T.tUnit[i], "");
+      setText(T.tSub[i], "No valid run yet");
+      setText(T.tCmp[i], "");
+    }
+  }
+  setTextF(T.sDist, "%.1f km", g_vs.trip.distanceKm);
+  setValue(T.sEff, g_vs.trip.energyValid && g_vs.trip.whPerKm > 0, "%.0f Wh/km", g_vs.trip.whPerKm);
+  setValue(T.sRec, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.recoveredKwh);
+  setValue(T.sSoc, g_vs.trip.energyValid, "%.0f %%", g_vs.trip.socUsedPct);
+
+  if (T.view == TV_JOURNEY) {
+    const TripData &t = g_vs.trip;
+    setTextF(T.jVal[0], "%.1f km", t.distanceKm);
+    setTextF(T.jVal[1], "%02d:%02d h:mm", (int)(t.movingS / 3600), (int)(t.movingS / 60) % 60);
+    setTextF(T.jVal[2], "%.1f %s", kphToDisplay(t.avgMovingKph), speedUnit());
+    setTextF(T.jVal[3], "%.0f %s", kphToDisplay(t.maxKph), speedUnit());
+    setValue(T.jVal[4], t.energyValid, "%.2f kWh", t.netKwh);
+    setValue(T.jVal[5], t.energyValid, "%.2f kWh", t.recoveredKwh);
+    setValue(T.jVal[6], t.energyValid && t.whPerKm > 0, "%.0f Wh/km", t.whPerKm);
+    setValue(T.jVal[7], t.energyValid, "%.0f %%", t.socUsedPct);
+    setValue(T.jVal[8], t.best60to100S > 0, "%.1f s", t.best60to100S);
+    setValue(T.jVal[9], g_vs.motion.peakBrake > 0, "%.2f g", g_vs.motion.peakBrake);
+    setValue(T.jVal[10], g_vs.motion.peakAccel > 0, "%.2f g", g_vs.motion.peakAccel);
+    setValue(T.jVal[11], gpsFresh(), "%.0f m", g_vs.gps.altM);
+  }
+  if (T.view == TV_EVENT) {
+    const Record &r = rs.r[T.eventIdx];
+    setTextF(T.eCtx, "%s · %s", SCOPE_NAMES[T.scopeIdx], r.valid ? r.when : "");
+    char val[32];
+    if (r.valid) snprintf(val, sizeof(val), REC_FMT[T.eventIdx], r.value);
+    else snprintf(val, sizeof(val), "—");
+    const char *names[REC_COUNT] = {"Best 0–60 km/h", "Best 0–100 km/h", "Best 100–0 braking",
+                                    "Max lateral G", "Peak battery draw", "Peak battery regen"};
+    setTextF(T.eTitle, "%s   %s %s", names[T.eventIdx], val, r.valid ? REC_UNITS[T.eventIdx] : "");
+    if (!r.valid) {
+      setText(T.eMeta, "No valid run yet.");
+    } else {
+      switch (T.eventIdx) {
+        case REC_0_60:
+        case REC_0_100:
+          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Stationary start, no rollout · %u valid run%s · GPS gate: 3D fix, 7+ sats, speed accuracy under 0.5 m/s · crossing interpolated between samples",
+                   r.socPct, r.packTemp, r.runs, r.runs == 1 ? "" : "s");
+          break;
+        case REC_100_0:
+          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Armed above 100 km/h · Distance %.0f m · Max braking %.2f g this session",
+                   r.socPct, r.packTemp, r.aux, g_vs.motion.peakBrake);
+          break;
+        case REC_LAT:
+          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Filtered IMU peak (5 Hz path) · %s turn · Session L %.2f · R %.2f g",
+                   r.socPct, r.packTemp, r.aux < 0 ? "Left" : "Right", g_vs.motion.peakLeft, g_vs.motion.peakRight);
+          break;
+        default:
+          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · One-second mean %.1f kW · Instantaneous max %.1f kW · Battery-side power, not motor output",
+                   r.socPct, r.packTemp, r.value, r.aux);
+          break;
+      }
+    }
+  }
+}
+
+// ---- Dynamics --------------------------------------------------------------------------------
+struct {
+  GPlot plot;
+  lv_obj_t *lat = nullptr, *lon = nullptr, *comb = nullptr, *yaw = nullptr;
+  lv_obj_t *pk[4] = {}, *reset = nullptr;
+  lv_obj_t *torque = nullptr, *torqueReq = nullptr, *pedal = nullptr, *motor = nullptr;
+} Y;
+void resetPeaksCb(lv_event_t *) {
+  if (g_cb.resetPeaks) g_cb.resetPeaks();
+  Y.plot.resetHistory();
+  D.plot.resetHistory();
+}
+void buildDynamics(lv_obj_t *p) {
+  Y.plot.create(p, 20, 10, 330);
+  const int X = 366, W = 414;
+  auto row = [&](int y, const char *name, const lv_font_t *font, lv_obj_t **val, bool sub) {
+    label(p, &inter_rg_16, MUTED, X, y + (sub ? 10 : 12), name);
+    *val = rlabel(p, font, FG, 780, y + (sub ? 6 : 2), 230, "—");
+    rule(p, X, y + (sub ? 40 : 46), W);
+  };
+  row(0, "Lateral", &inter_md_28, &Y.lat, false);
+  row(48, "Longitudinal", &inter_md_28, &Y.lon, false);
+  row(96, "Combined", &inter_md_28, &Y.comb, false);
+  row(144, "Yaw rate", &inter_md_28, &Y.yaw, false);
+  // peaks row: four values with small captions beneath
+  label(p, &inter_rg_16, MUTED, X, 206, "Peaks");
+  static const char *PK_CAP[4] = {"L", "R", "ACC", "BRK"};
+  for (int i = 0; i < 4; i++) {
+    Y.pk[i] = rlabel(p, &inter_md_26, FG, 486 + i * 68, 196, 64, "—");
+    lv_obj_t *cp = rlabel(p, &inter_rg_14, MUTED, 486 + i * 68, 226, 64, PK_CAP[i]);
+    lv_obj_set_style_text_letter_space(cp, 1, 0);
+  }
+  Y.reset = button(p, 710, 200, 70, 34, "RESET", &inter_rg_14, LIME, PANEL, resetPeaksCb, nullptr);
+  lv_obj_set_style_border_width(Y.reset, 1, 0);
+  lv_obj_set_style_border_color(Y.reset, c(LINE), 0);
+  rule(p, X, 246, W);
+  row(252, "Torque actual / requested", &inter_md_26, &Y.torque, true);
+  row(294, "Pedal · motor temps", &inter_md_26, &Y.pedal, true);
+}
+void updateDynamics() {
+  bool mv = motionFresh();
+  Y.plot.setSample(g_vs.motion.latG, g_vs.motion.lonG, mv);
+  Y.plot.setPeaks(g_vs.motion.peakLeft, g_vs.motion.peakRight, g_vs.motion.peakAccel, g_vs.motion.peakBrake);
+  Y.plot.update(g_now);
+  setValue(Y.lat, mv, "%+.2f g", g_vs.motion.latG);
+  setValue(Y.lon, mv, "%+.2f g", g_vs.motion.lonG);
+  setValue(Y.comb, mv, "%.2f g", g_vs.motion.combinedG);
+  setValue(Y.yaw, mv, "%+.1f °/s", g_vs.motion.yawDps);
+  const float pk[4] = {g_vs.motion.peakLeft, g_vs.motion.peakRight, g_vs.motion.peakAccel, g_vs.motion.peakBrake};
+  for (int i = 0; i < 4; i++) setValue(Y.pk[i], pk[i] > 0, "%.2f", pk[i]);
+  bool live = carFast();
+  if (live) {
+    setTextF(Y.torque, "%.0f / %.0f Nm", g_vs.car.torqueNm, g_vs.car.torqueReqNm);
+    setColor(Y.torque, FG);
+    setTextF(Y.pedal, "%.0f %%  ·  %.0f / %.0f °C", g_vs.car.pedalPct, g_vs.car.motorTemp1, g_vs.car.motorTemp2);
+    setColor(Y.pedal, FG);
+  } else {
+    setText(Y.torque, "—");
+    setColor(Y.torque, MUTED);
+    setText(Y.pedal, "—");
+    setColor(Y.pedal, MUTED);
+  }
+}
+
+// ---- Energy and Battery (charts) ------------------------------------------------------------
+lv_obj_t *makeChart(lv_obj_t *p, int x, int y, int w, int h, int ymin, int ymax, lv_chart_series_t **ser, uint32_t color) {
+  lv_obj_t *ch = lv_chart_create(p);
+  lv_obj_remove_style_all(ch);
+  lv_obj_set_pos(ch, x, y);
+  lv_obj_set_size(ch, w, h);
+  lv_chart_set_type(ch, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(ch, 120);
+  lv_chart_set_range(ch, LV_CHART_AXIS_PRIMARY_Y, ymin, ymax);
+  lv_chart_set_update_mode(ch, LV_CHART_UPDATE_MODE_SHIFT);
+  lv_chart_set_div_line_count(ch, 3, 0);
+  lv_obj_set_style_line_color(ch, c(LINE), LV_PART_MAIN);
+  lv_obj_set_style_line_width(ch, 1, LV_PART_MAIN);
+  lv_obj_set_style_line_width(ch, 3, LV_PART_ITEMS);
+  lv_obj_set_style_size(ch, 0, LV_PART_INDICATOR);
+  *ser = lv_chart_add_series(ch, c(color), LV_CHART_AXIS_PRIMARY_Y);
+  lv_chart_set_all_value(ch, *ser, LV_CHART_POINT_NONE);
+  return ch;
+}
+struct {
+  lv_obj_t *avg = nullptr, *net = nullptr, *rec = nullptr, *soc = nullptr, *chart = nullptr, *note = nullptr, *nodata = nullptr;
+  lv_chart_series_t *ser = nullptr;
+  uint32_t lastPoint = 0;
+} E;
+struct {
+  lv_obj_t *v = nullptr, *a = nullptr, *temp = nullptr, *spread = nullptr, *chart = nullptr;
+  lv_obj_t *cells = nullptr, *v12 = nullptr, *soh = nullptr, *nodata = nullptr;
+  lv_chart_series_t *ser = nullptr;
+  uint32_t lastPoint = 0;
+} B;
+
+lv_obj_t *statCol(lv_obj_t *p, int x, const char *cap, lv_obj_t **val) {
+  caption(p, x, 8, cap);
+  *val = label(p, &inter_md_30, FG, x, 28, "—");
+  return *val;
+}
+lv_obj_t *noData(lv_obj_t *p) {
+  lv_obj_t *o = panel(p, 300, 150, 200, 56, PANEL, 10);
+  lv_obj_set_style_border_width(o, 1, 0);
+  lv_obj_set_style_border_color(o, c(LINE), 0);
+  lv_obj_t *l = label(o, &inter_rg_18, MUTED, 0, 0, "NO CAR DATA");
+  lv_obj_set_style_text_letter_space(l, 2, 0);
+  lv_obj_center(l);
+  return o;
+}
+void buildEnergy(lv_obj_t *p) {
+  statCol(p, 20, "TRIP AVERAGE", &E.avg);
+  statCol(p, 213, "NET ENERGY", &E.net);
+  statCol(p, 406, "RECOVERED", &E.rec);
+  statCol(p, 599, "SOC USED", &E.soc);
+  label(p, &inter_rg_14, MUTED, 40, 90, "kW");
+  label(p, &inter_rg_14, MUTED, 20, 112, "+100");
+  label(p, &inter_rg_14, MUTED, 20, 158, "0");
+  label(p, &inter_rg_14, MUTED, 20, 204, "−50");
+  E.chart = makeChart(p, 70, 100, 710, 130, -50, 100, &E.ser, LIME);
+  rule(p, 70, 230, 710);
+  label(p, &inter_rg_14, MUTED, 70, 236, "−10 min");
+  lv_obj_t *now = label(p, &inter_rg_14, MUTED, 0, 236, "now");
+  lv_obj_align(now, LV_ALIGN_TOP_RIGHT, -20, 236);
+  E.note = label(p, &inter_rg_16, MUTED, 20, 262, "Battery power, last 10 min · above the line draws, below recovers · Wh/km shown only above 15 km/h");
+  E.nodata = noData(p);
+}
+void updateEnergy() {
+  bool live = carFast();
+  setValue(E.avg, g_vs.trip.energyValid && g_vs.trip.whPerKm > 0, "%.0f Wh/km", g_vs.trip.whPerKm);
+  setValue(E.net, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.netKwh);
+  setValue(E.rec, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.recoveredKwh);
+  setValue(E.soc, g_vs.trip.energyValid, "%.0f %%", g_vs.trip.socUsedPct);
+  if (g_now - E.lastPoint >= 5000) {  // 120 points over 10 min
+    E.lastPoint = g_now;
+    lv_chart_set_next_value(E.chart, E.ser, live ? (lv_coord_t)lroundf(g_vs.car.powerKw) : LV_CHART_POINT_NONE);
+  }
+  show(E.nodata, !live);
+}
+void buildBattery(lv_obj_t *p) {
+  statCol(p, 20, "PACK VOLTAGE", &B.v);
+  statCol(p, 200, "CURRENT", &B.a);
+  statCol(p, 360, "PACK TEMP MIN · AVG · MAX", &B.temp);
+  statCol(p, 630, "CELL SPREAD", &B.spread);
+  label(p, &inter_rg_14, MUTED, 40, 90, "°C");
+  label(p, &inter_rg_14, MUTED, 20, 112, "40");
+  label(p, &inter_rg_14, MUTED, 20, 158, "25");
+  label(p, &inter_rg_14, MUTED, 20, 204, "10");
+  B.chart = makeChart(p, 70, 100, 710, 130, 10, 40, &B.ser, LIME);
+  rule(p, 70, 230, 710);
+  label(p, &inter_rg_14, MUTED, 70, 236, "−10 min");
+  lv_obj_t *now = label(p, &inter_rg_14, MUTED, 0, 236, "now");
+  lv_obj_align(now, LV_ALIGN_TOP_RIGHT, -20, 236);
+  rule(p, 20, 266, 760);
+  label(p, &inter_rg_16, MUTED, 20, 286, "Cells avg / min / max");
+  B.cells = label(p, &inter_md_26, FG, 190, 280, "—");
+  label(p, &inter_rg_16, MUTED, 466, 286, "12 V");
+  B.v12 = label(p, &inter_md_26, FG, 506, 280, "—");
+  label(p, &inter_rg_16, MUTED, 616, 286, "BMS health");
+  B.soh = rlabel(p, &inter_md_26, FG, 780, 280, 72, "—");
+  B.nodata = noData(p);
+}
+void updateBattery() {
+  bool live = carFast(), slow = carSlow();
+  setValue(B.v, live, "%.1f V", g_vs.car.packV);
+  setValue(B.a, live, "%+.0f A", g_vs.car.packA);
+  if (slow) {
+    setTextF(B.temp, "%.0f·%.0f·%.0f °C", g_vs.car.tempMin, g_vs.car.tempAvg, g_vs.car.tempMax);
+    setColor(B.temp, FG);
+    setTextF(B.spread, "%.0f mV", (g_vs.car.cellMaxV - g_vs.car.cellMinV) * 1000.0f);
+    setColor(B.spread, FG);
+    setTextF(B.cells, "%.2f · %.2f · %.2f V", g_vs.car.cellAvgV, g_vs.car.cellMinV, g_vs.car.cellMaxV);
+    setColor(B.cells, FG);
+    setTextF(B.v12, "%.1f V", g_vs.car.v12);
+    setColor(B.v12, FG);
+    setTextF(B.soh, "%.0f %%", g_vs.car.sohPct);
+    setColor(B.soh, FG);
+  } else {
+    for (lv_obj_t *l : {B.temp, B.spread, B.cells, B.v12, B.soh}) {
+      setText(l, "—");
+      setColor(l, MUTED);
+    }
+  }
+  if (g_now - B.lastPoint >= 5000) {
+    B.lastPoint = g_now;
+    lv_chart_set_next_value(B.chart, B.ser, slow ? (lv_coord_t)lroundf(g_vs.car.tempAvg) : LV_CHART_POINT_NONE);
+  }
+  show(B.nodata, !slow);
+}
+
+// ---- Settings ----------------------------------------------------------------------------
+struct {
+  Segmented night, demo, units;
+  lv_obj_t *calib = nullptr, *calibL = nullptr, *diag = nullptr, *about = nullptr, *bright = nullptr, *dongle = nullptr;
+} G;
+void nightCb(lv_event_t *e) {
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  g_nightMode = i == 0 ? -1 : (i == 1 ? 1 : 0);
+  G.night.select(i);
+  if (g_cb.setNightMode) g_cb.setNightMode(g_nightMode);
+}
+void demoCb(lv_event_t *e) {
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  g_demo = i == 1;
+  G.demo.select(i);
+  if (g_cb.setDemo) g_cb.setDemo(g_demo);
+}
+void unitsCb(lv_event_t *e) {
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  g_units_mph = i == 1;
+  G.units.select(i);
+}
+void calibCb(lv_event_t *) {
+  if (g_cb.calibrateMounting) g_cb.calibrateMounting();
+  setText(G.calibL, "Taken");
+}
+void resetTripCb(lv_event_t *) {
+  if (g_cb.resetTrip) g_cb.resetTrip();
+  D.plot.resetHistory();
+  Y.plot.resetHistory();
+}
+void clearRecordsCb(lv_event_t *) {
+  if (g_cb.clearRecords) g_cb.clearRecords();
+}
+lv_obj_t *settingRow(lv_obj_t *p, int col, int row, const char *name) {
+  int x = col == 0 ? 20 : 414, y = 8 + row * 44;
+  label(p, &inter_rg_18, FG, x, y + 10, name);
+  rule(p, x, y + 42, 366);
+  return p;
+}
+lv_obj_t *rowValue(lv_obj_t *p, int col, int row, const char *text, uint32_t color = MUTED) {
+  int y = 8 + row * 44;
+  return rlabel(p, &inter_rg_16, color, col == 0 ? 386 : 780, y + 12, 250, text);
+}
+void buildSettings(lv_obj_t *p) {
+  static const char *NIGHT[3] = {"Auto", "On", "Off"};
+  static const char *DEMO[2] = {"Off", "Replay"};
+  static const char *UNITS[2] = {"km/h", "mph"};
+  settingRow(p, 0, 0, "IMU mounting calibration");
+  G.calib = button(p, 300, 12, 86, 34, "Take now", &inter_rg_14, LIME, PANEL, calibCb, nullptr);
+  G.calibL = buttonLabel(G.calib);
+  settingRow(p, 0, 1, "Units");
+  G.units = segmented(p, 246, 56, 68, 34, UNITS, 2, unitsCb, &inter_rg_14);
+  G.units.select(0);
+  settingRow(p, 0, 2, "Night mode");
+  G.night = segmented(p, 196, 100, 62, 34, NIGHT, 3, nightCb, &inter_rg_14);
+  G.night.select(0);
+  settingRow(p, 0, 3, "Brightness");
+  G.bright = rowValue(p, 0, 3, "Auto · 100 %");
+  settingRow(p, 0, 4, "OBD");
+  rowValue(p, 0, 4, "Phase 3c: dongle not yet paired");
+  settingRow(p, 0, 5, "Dongle");
+  G.dongle = rowValue(p, 0, 5, "none");
+  settingRow(p, 0, 6, "Start screen");
+  rowValue(p, 0, 6, "Drive");
+
+  settingRow(p, 1, 0, "Trip");
+  button(p, 660, 12, 120, 34, "Reset this trip", &inter_rg_14, FG, PANEL, resetTripCb, nullptr);
+  settingRow(p, 1, 1, "All-time records");
+  button(p, 700, 56, 80, 34, "Clear", &inter_rg_14, RED, PANEL, clearRecordsCb, nullptr);
+  settingRow(p, 1, 2, "Timezone");
+  rowValue(p, 1, 2, "Australia/Melbourne");
+  settingRow(p, 1, 3, "Diagnostics");
+  G.diag = rowValue(p, 1, 3, "");
+  settingRow(p, 1, 4, "Demo mode");
+  G.demo = segmented(p, 630, 188, 72, 34, DEMO, 2, demoCb, &inter_rg_14);
+  G.demo.select(1);
+  settingRow(p, 1, 5, "WiFi update");
+  rowValue(p, 1, 5, "Off · 10 min timeout");
+  settingRow(p, 1, 6, "About");
+  G.about = rowValue(p, 1, 6, "");
+}
+void updateSettings() {
+  setTextF(G.diag, "GPS %d · IMU %.0f Hz · I2C %lu ms", g_vs.gps.sats, g_vs.imu.rateHz,
+           (unsigned long)g_vs.diag.i2cLongestHoldMs);
+  setTextF(G.bright, "%s · %u %%", g_nightMode == -1 ? "Auto" : "Manual", g_vs.disp.backlightPct);
+  setTextF(G.about, "Mini Dash %s · touch %s", g_version, g_vs.diag.touchId);
+}
+
+// ---- shell ---------------------------------------------------------------------------------
+void selectTab(Ui::Page p) {
+  for (int i = 0; i < Ui::PAGE_COUNT; i++) {
+    bool on = (int)p == i;
+    lv_obj_set_style_bg_opa(H.tab[i], on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    show(H.tabInd[i], on);
+    setColor(buttonLabel(H.tab[i]), on ? FG : MUTED);
+  }
+}
+void tabCb(lv_event_t *e) { Ui::setPage((Ui::Page)(intptr_t)lv_event_get_user_data(e)); }
+void headerCb(lv_event_t *) {
+  if (g_page == Ui::PAGE_SETTINGS) Ui::setPage(g_pageBeforeSettings);
+  else Ui::setPage(Ui::PAGE_SETTINGS);
+}
+void gestureCb(lv_event_t *e) {
+  lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+  if (g_page == Ui::PAGE_SETTINGS) return;
+  if (dir == LV_DIR_LEFT) Ui::setPage((Ui::Page)((g_page + 1) % Ui::PAGE_COUNT));
+  else if (dir == LV_DIR_RIGHT) Ui::setPage((Ui::Page)((g_page + Ui::PAGE_COUNT - 1) % Ui::PAGE_COUNT));
+  (void)e;
+}
+
+void buildShell() {
+  H.scr = lv_obj_create(nullptr);
+  lv_obj_remove_style_all(H.scr);
+  lv_obj_set_style_bg_color(H.scr, c(BG), 0);
+  lv_obj_set_style_bg_opa(H.scr, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(H.scr, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(H.scr, gestureCb, LV_EVENT_GESTURE, nullptr);
+
+  H.header = box(H.scr, 0, 0, 800, HEADER_H);
+  lv_obj_add_flag(H.header, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(H.header, headerCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *brand = label(H.header, &inter_sb_16, FG, 20, 16, "MINI");
+  lv_obj_set_style_text_letter_space(brand, 3, 0);
+  lv_obj_t *model = label(H.header, &inter_sb_16, LIME, 82, 16, "COOPER SE");
+  lv_obj_set_style_text_letter_space(model, 2, 0);
+  rule(H.scr, 0, HEADER_H - 1, 800);
+  H.clock = rlabel(H.header, &inter_rg_18, FG, 780, 14, 70, "--:--");
+  H.night = rlabel(H.header, &inter_rg_16, MUTED, 706, 16, 50, "day");
+  H.obd = pill(H.header, 0, 13, "OBD OFF", MUTED);
+  H.obdL = buttonLabel(H.obd);
+  lv_obj_align(H.obd, LV_ALIGN_TOP_RIGHT, -150, 13);
+  H.gps = rlabel(H.header, &inter_rg_16, MUTED, 538, 16, 130, "GPS —");
+  H.demo = pill(H.header, 0, 13, "DEMO", AMBER);
+  lv_obj_align(H.demo, LV_ALIGN_TOP_RIGHT, -352, 13);
+  H.back = label(H.header, &inter_rg_16, MUTED, 0, 16, "← back");
+  lv_obj_align(H.back, LV_ALIGN_TOP_RIGHT, -440, 16);
+  show(H.back, false);
+
+  H.content = box(H.scr, 0, HEADER_H, 800, CONTENT_H);
+  for (int i = 0; i < Ui::PAGE_COUNT + 1; i++) {
+    H.page[i] = box(H.content, 0, 0, 800, CONTENT_H);
+    show(H.page[i], false);
+  }
+  buildDrive(H.page[Ui::PAGE_DRIVE]);
+  buildTrip(H.page[Ui::PAGE_TRIP]);
+  buildDynamics(H.page[Ui::PAGE_DYNAMICS]);
+  buildEnergy(H.page[Ui::PAGE_ENERGY]);
+  buildBattery(H.page[Ui::PAGE_BATTERY]);
+  buildSettings(H.page[Ui::PAGE_COUNT]);
+
+  H.tabbar = box(H.scr, 0, HEADER_H + CONTENT_H, 800, TABBAR_H);
+  rule(H.tabbar, 0, 0, 800);
+  for (int i = 0; i < Ui::PAGE_COUNT; i++) {
+    lv_obj_t *t = box(H.tabbar, i * 160, 0, 160, TABBAR_H);
+    lv_obj_set_style_bg_color(t, c(PANEL), 0);
+    lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(t, tabCb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    lv_obj_t *l = label(t, &inter_rg_16, MUTED, 0, 0, TAB_NAMES[i]);
+    lv_obj_set_style_text_letter_space(l, 2, 0);
+    lv_obj_center(l);
+    H.tab[i] = t;
+    H.tabInd[i] = panel(t, 0, 0, 160, 3, LIME, 0);
+  }
+  show(H.page[Ui::PAGE_DRIVE], true);
+  selectTab(Ui::PAGE_DRIVE);
+}
+
+void updateHeader() {
+  if (g_vs.gps.fixOk && fresh(g_vs.gps.stampMs, 2000)) {
+    setTextF(H.gps, "GPS %d", g_vs.gps.sats);
+    setColor(H.gps, MUTED);
+  } else {
+    setText(H.gps, "GPS acquiring");
+    setColor(H.gps, AMBER);
+  }
+  const char *obd = !g_vs.car.linked ? "OBD SCAN" : (g_vs.car.asleep ? "CAR ASLEEP" : "OBD LINK");
+  uint32_t oc = (!g_vs.car.linked || g_vs.car.asleep) ? MUTED : LIME;
+  setText(H.obdL, obd);
+  setColor(H.obdL, oc);
+  setBorder(H.obd, oc);
+  setText(H.night, g_vs.disp.night ? "night" : "day");
+  show(H.demo, g_vs.demo);
+  if (g_vs.gps.timeValid) {
+    // UTC from GPS plus the configured zone (Australia/Melbourne, DST handled later).
+    int h = (g_vs.gps.hour + 11) % 24;
+    setTextF(H.clock, "%02d:%02d", h, g_vs.gps.minute);
+  } else {
+    uint32_t s = g_now / 1000;
+    setTextF(H.clock, "%02lu:%02lu", (unsigned long)(s / 3600) % 24, (unsigned long)(s / 60) % 60);
+  }
+}
+
+void tickCb(lv_timer_t *) {
+  g_now = millis();
+  uint32_t tStart = g_now;
+  Vs::snapshot(g_vs);
+  struct Done { uint32_t t; ~Done() { uint32_t d = millis() - t; if (d > g_tickMaxMs) g_tickMaxMs = d; } } done{tStart};
+  if (!g_shellShown) {
+    uint32_t up = g_now - g_bootMs;
+    if (H.scr == nullptr && up >= 300) buildShell();  // behind the splash, so the hand-over is instant
+    if ((g_vs.sensorsReady && up >= 1500) || up >= 3000) Ui::showShell();
+    else {
+      if (S.clock && g_vs.gps.timeValid) setTextF(S.clock, "%02u:%02u UTC", g_vs.gps.hour, g_vs.gps.minute);
+      return;
+    }
+  }
+  updateHeader();
+  switch (g_page) {
+    case Ui::PAGE_DRIVE: updateDrive(); break;
+    case Ui::PAGE_TRIP: updateTrip(); break;
+    case Ui::PAGE_DYNAMICS: updateDynamics(); break;
+    case Ui::PAGE_ENERGY: updateEnergy(); break;
+    case Ui::PAGE_BATTERY: updateBattery(); break;
+    case Ui::PAGE_SETTINGS: updateSettings(); break;
+    default: break;
+  }
+}
+}  // namespace
+
+namespace Ui {
+
+void begin(const Callbacks &cb, const char *version) {
+  g_cb = cb;
+  g_version = version;
+  g_bootMs = millis();
+  buildSplash();
+  g_tick = lv_timer_create(tickCb, 100, nullptr);
+}
+
+void setBootStatus(const char *gps, const char *obd, const char *imu) {
+  if (gps) setText(S.gps, gps);
+  if (obd) setText(S.obd, obd);
+  if (imu) setText(S.imu, imu);
+}
+
+void showShell() {
+  if (g_shellShown) return;
+  if (H.scr == nullptr) buildShell();
+  lv_scr_load_anim(H.scr, LV_SCR_LOAD_ANIM_FADE_ON, 250, 0, true);
+  g_shellShown = true;
+  S.scr = nullptr;
+  S.gps = S.obd = S.imu = S.clock = nullptr;
+}
+
+void setPage(Page p) {
+  if (!g_shellShown) return;
+  if (p == PAGE_SETTINGS) {
+    if (g_page != PAGE_SETTINGS) g_pageBeforeSettings = g_page;
+  }
+  for (int i = 0; i < PAGE_COUNT + 1; i++) show(H.page[i], false);
+  g_page = p;
+  show(H.page[p == PAGE_SETTINGS ? PAGE_COUNT : p], true);
+  show(H.back, p == PAGE_SETTINGS);
+  if (p != PAGE_SETTINGS) selectTab(p);
+  else for (int i = 0; i < PAGE_COUNT; i++) { lv_obj_set_style_bg_opa(H.tab[i], LV_OPA_TRANSP, 0); show(H.tabInd[i], false); }
+  if (p == PAGE_TRIP) tripShowView(T.view == TV_EVENT ? TV_RECORDS : T.view);
+}
+
+Page page() { return g_page; }
+
+void timing(uint32_t *tickMaxMs, uint32_t *plotMaxMs) {
+  *tickMaxMs = g_tickMaxMs;
+  *plotMaxMs = g_plotMaxMs;
+  g_tickMaxMs = g_plotMaxMs = 0;
+}
+
+}  // namespace Ui

@@ -1,349 +1,216 @@
-// Mini Dash phase 3a: board bring-up (CLAUDE.md section 10).
+// Mini Dash firmware (phase 3b onward). Boot order (CLAUDE.md section 4 and 5): serial, I2C,
+// expander, panel, touch, LVGL and the splash first, so the screen is on within a second;
+// then the sensor task on core 0 and the demo replay. LVGL runs on core 1.
 //
-// Proves, in order: USB CDC serial, PSRAM and flash settings, the I2C map against
-// board_config.h, the IO expander (backlight PWM ramp), the RGB panel (colour bars),
-// the NEO-M9N at 10 Hz PVT, the ISM330DHCX at 208 Hz, the VEML7700 at 1 Hz. One summary
-// line per second. Everything on core 1 in loop(); the task split comes in phase 3b.
-//
-// Serial keys: s = rescan I2C, 0..9 = backlight 10..100 percent, c = colour bars,
-// w = white, k = black, r = reboot.
+// Serial keys: d = demo on/off, 1..9 and 0 = backlight 10..100 %, p = screenshot (base64
+// RGB565, decode with tools/screenshot.py), n = next tab, D R Y E B = a page, x = settings, i = I2C scan, r = reboot.
 
 #include <Arduino.h>
-#include <Wire.h>
 
-#include <Adafruit_VEML7700.h>
-#include <SparkFun_ISM330DHCX.h>
-#include <SparkFun_u-blox_GNSS_v3.h>
+#include "esp_heap_caps.h"
 
+#include "app/demo_source.h"
+#include "app/lvgl_port.h"
+#include "app/sensors.h"
+#include "app/touch_gt911.h"
+#include "app/trip_engine.h"
 #include "board_config.h"
 #include "display_rgb.h"
 #include "i2c_bus.h"
 #include "io_expander.h"
+#include "ui/theme.h"
+#include "ui/ui.h"
+#include "vehicle_state.h"
 
 namespace {
+constexpr const char *VERSION = "0.3b";
+TripEngine g_engine;
+esp_lcd_panel_handle_t g_panel = nullptr;
+bool g_touchOk = false;
 
-constexpr const char *FW_NAME = "mini-dash bringup";
-
-SFE_UBLOX_GNSS g_gnss;
-SparkFun_ISM330DHCX g_imu;
-Adafruit_VEML7700 g_lux;
-
-bool g_expanderOk = false;
-bool g_displayOk = false;
-bool g_gpsOk = false;
-bool g_imuOk = false;
-bool g_luxOk = false;
-uint8_t g_backlightPercent = 100;
-
-// Latest readings for the once-a-second print.
-struct {
-  uint8_t fixType = 0;
-  bool fixOk = false;
-  uint8_t siv = 0;
-  float speedMps = 0;
-  float speedAccMps = 0;
-  float hAccM = 0;
-  int32_t lat = 0, lon = 0;
-  float altM = 0;
-  uint32_t pvtCount = 0;
-  uint32_t lastIToW = 0;
-  uint16_t year = 0;
-  uint8_t month = 0, day = 0, hour = 0, minute = 0, second = 0;
-  bool timeValid = false;
-} g_gps;
-
-struct {
-  sfe_ism_data_t accel{};  // mg
-  sfe_ism_data_t gyro{};   // mdps
-  uint32_t samples = 0;
-  int16_t tempRaw = 0;
-} g_imuData;
-
-float g_luxValue = -1;
-
-// ------------------------------------------------------------------------------------
-void printBanner() {
-  Serial.println();
-  Serial.printf("%s, built %s %s\n", FW_NAME, __DATE__, __TIME__);
-  Serial.printf("chip: %s rev %d, %d cores, %lu MHz\n", ESP.getChipModel(), ESP.getChipRevision(),
-                ESP.getChipCores(), (unsigned long)ESP.getCpuFreqMHz());
-  Serial.printf("flash: %lu MB, mode %d; PSRAM: %lu bytes (%s)\n",
-                (unsigned long)(ESP.getFlashChipSize() / (1024 * 1024)), (int)ESP.getFlashChipMode(),
-                (unsigned long)ESP.getPsramSize(), psramFound() ? "found" : "NOT FOUND");
-  Serial.printf("reset reason: %d; sketch %lu bytes, free %lu\n", (int)esp_reset_reason(),
-                (unsigned long)ESP.getSketchSize(), (unsigned long)ESP.getFreeSketchSpace());
-  Serial.printf("arduino core %d.%d.%d, idf %s\n", ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR,
-                ESP_ARDUINO_VERSION_PATCH, esp_get_idf_version());
-}
-
-// ------------------------------------------------------------------------------------
-const char *expectedName(uint8_t addr) {
-  for (const auto &e : I2C_EXPECTED) {
-    if (e.addr == addr) return e.name;
+void uiSetDemo(bool on) { Demo::setEnabled(on); }
+void uiSetNight(int mode) { Sensors::setNightMode(mode); }
+void uiCalibrate() { Sensors::calibrateMounting(); }
+void uiResetTrip() {
+  VsLock lk;
+  if (lk.ok()) {
+    g_engine.reset(millis());
+    g_engine.publish(Vs::raw(), nullptr);
   }
-  return nullptr;
+}
+void uiResetPeaks() {
+  VsLock lk;
+  if (lk.ok()) {
+    g_engine.resetSessionPeaks();
+    g_engine.publish(Vs::raw(), nullptr);
+  }
+}
+void uiClearRecords() {
+  VsLock lk;
+  if (lk.ok()) {
+    g_engine.setLifetime(RecordSet());
+    g_engine.reset(millis());
+    g_engine.publish(Vs::raw(), nullptr);
+  }
 }
 
-void scanAndReport() {
-  uint8_t found[32];
-  size_t n = I2cBus::scan(found, sizeof(found));
-  Serial.printf("I2C scan: %u device(s)\n", (unsigned)n);
-  bool allGood = true;
-  for (size_t i = 0; i < n; i++) {
-    const char *name = expectedName(found[i]);
-    if (name) {
-      Serial.printf("  0x%02X  %s\n", found[i], name);
-    } else {
-      Serial.printf("  0x%02X  UNEXPECTED: not in board_config.h, stop and ask\n", found[i]);
-      allGood = false;
+// Screenshot: snapshot the active screen into a PSRAM buffer and dump it as base64 RGB565 so
+// the Mac side (tools/screenshot.py) can save a PNG. LVGL's own pool is far too small for it.
+void screenshot() {
+  static const char *B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  static uint8_t *buf = nullptr;
+  static lv_img_dsc_t dsc;
+  uint32_t need;
+  {
+    LvLock lk;
+    need = lv_snapshot_buf_size_needed(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
+    if (buf == nullptr) buf = static_cast<uint8_t *>(heap_caps_malloc(need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (buf == nullptr || lv_snapshot_take_to_buf(lv_scr_act(), LV_IMG_CF_TRUE_COLOR, &dsc, buf, need) != LV_RES_OK) {
+      Serial.println("snapshot failed");
+      return;
     }
   }
-  for (const auto &e : I2C_EXPECTED) {
-    bool present = false;
-    for (size_t i = 0; i < n; i++) present |= (found[i] == e.addr);
-    if (!present) {
-      Serial.printf("  0x%02X  MISSING: %s (%s)\n", e.addr, e.name,
-                    e.onBoard ? "on the display board" : "Mini Dash sensor, check the terminal wiring");
-      allGood = false;
+  const uint8_t *src = dsc.data;
+  size_t n = dsc.data_size;
+  I2cBus::setQuiet(true);  // keep other tasks' warnings out of the dump
+  Serial.printf("SNAP %d %d %u\n", dsc.header.w, dsc.header.h, (unsigned)n);
+  char line[77];
+  int col = 0;
+  for (size_t i = 0; i < n; i += 3) {
+    uint32_t v = (uint32_t)src[i] << 16 | (i + 1 < n ? src[i + 1] : 0) << 8 | (i + 2 < n ? src[i + 2] : 0);
+    line[col++] = B64[(v >> 18) & 63];
+    line[col++] = B64[(v >> 12) & 63];
+    line[col++] = i + 1 < n ? B64[(v >> 6) & 63] : '=';
+    line[col++] = i + 2 < n ? B64[v & 63] : '=';
+    if (col >= 76) {
+      line[col] = 0;
+      Serial.println(line);
+      col = 0;
     }
   }
-  Serial.println(allGood ? "I2C map matches board_config.h" : "I2C map does NOT match board_config.h");
-}
-
-// ------------------------------------------------------------------------------------
-void setBacklight(uint8_t percent) {
-  g_backlightPercent = percent;
-  if (!IoExpander::setBacklightPercent(percent)) {
-    Serial.println("backlight: expander write failed");
+  if (col) {
+    line[col] = 0;
+    Serial.println(line);
   }
-}
-
-void backlightRamp() {
-  Serial.print("backlight ramp 100 -> 0 -> 100:");
-  for (int p = 100; p >= 0; p -= 10) {
-    setBacklight(p);
-    Serial.printf(" %d", p);
-    delay(150);
-  }
-  for (int p = 0; p <= 100; p += 10) {
-    setBacklight(p);
-    Serial.printf(" %d", p);
-    delay(150);
-  }
-  Serial.println();
-}
-
-// ------------------------------------------------------------------------------------
-bool gpsBegin() {
-  I2cLock guard(500);
-  if (!guard.ok()) return false;
-  // begin() polls the module a few times; it is allowed to exceed the normal hold limit once.
-  if (!g_gnss.begin(Wire, I2C_ADDR_NEO_M9N)) return false;
-  g_gnss.setI2COutput(COM_TYPE_UBX);  // UBX only on I2C, no NMEA
-  g_gnss.setNavigationFrequency(GPS_NAV_RATE_HZ);
-  g_gnss.setAutoPVT(true);
-  Serial.printf("GPS: protocol version %d.%02d, nav rate %d Hz\n", g_gnss.getProtocolVersionHigh(),
-                g_gnss.getProtocolVersionLow(), g_gnss.getNavigationFrequency());
-  return true;
-}
-
-void gpsPoll() {
-  I2cLock guard(20);
-  if (!guard.ok()) return;
-  if (!g_gnss.getPVT()) return;  // non-blocking with autoPVT
-  g_gps.pvtCount++;
-  g_gps.fixType = g_gnss.getFixType();
-  g_gps.fixOk = g_gnss.getGnssFixOk();
-  g_gps.siv = g_gnss.getSIV();
-  g_gps.speedMps = g_gnss.getGroundSpeed() / 1000.0f;
-  g_gps.speedAccMps = g_gnss.getSpeedAccEst() / 1000.0f;
-  g_gps.hAccM = g_gnss.getHorizontalAccEst() / 1000.0f;
-  g_gps.lat = g_gnss.getLatitude();
-  g_gps.lon = g_gnss.getLongitude();
-  g_gps.altM = g_gnss.getAltitudeMSL() / 1000.0f;
-  g_gps.lastIToW = g_gnss.getTimeOfWeek();
-  g_gps.timeValid = g_gnss.getTimeValid() && g_gnss.getDateValid();
-  g_gps.year = g_gnss.getYear();
-  g_gps.month = g_gnss.getMonth();
-  g_gps.day = g_gnss.getDay();
-  g_gps.hour = g_gnss.getHour();
-  g_gps.minute = g_gnss.getMinute();
-  g_gps.second = g_gnss.getSecond();
-}
-
-// ------------------------------------------------------------------------------------
-bool imuBegin() {
-  I2cLock guard(200);
-  if (!guard.ok()) return false;
-  if (!g_imu.begin(Wire, I2C_ADDR_ISM330DHCX)) return false;
-  g_imu.deviceReset();
-  uint32_t t0 = millis();
-  while (!g_imu.getDeviceReset()) {
-    if (millis() - t0 > 100) {
-      Serial.println("IMU: reset did not complete");
-      return false;
-    }
-    delay(1);
-  }
-  g_imu.setDeviceConfig();
-  g_imu.setBlockDataUpdate();
-  g_imu.setAccelDataRate(ISM_XL_ODR_208Hz);
-  g_imu.setAccelFullScale(ISM_4g);
-  g_imu.setGyroDataRate(ISM_GY_ODR_208Hz);
-  g_imu.setGyroFullScale(ISM_500dps);
-  g_imu.setAccelFilterLP2();
-  g_imu.setAccelSlopeFilter(ISM_LP_ODR_DIV_100);
-  g_imu.setGyroFilterLP1();
-  g_imu.setGyroLP1Bandwidth(ISM_MEDIUM);
-  Serial.printf("IMU: WHO_AM_I 0x%02X (expect 0x6B), 208 Hz, 4 g, 500 dps\n", g_imu.getUniqueId());
-  return true;
-}
-
-void imuPoll() {
-  I2cLock guard(10);
-  if (!guard.ok()) return;
-  if (!g_imu.checkStatus()) return;
-  if (g_imu.getAccel(&g_imuData.accel) && g_imu.getGyro(&g_imuData.gyro)) {
-    g_imuData.samples++;
-  }
-}
-
-// ------------------------------------------------------------------------------------
-bool luxBegin() {
-  I2cLock guard(100);
-  if (!guard.ok()) return false;
-  if (!g_lux.begin(&Wire)) return false;
-  // Gain 1/8 and 100 ms gives the widest range (to about 120 klux) for a sun-on-dash check.
-  g_lux.setGain(VEML7700_GAIN_1_8);
-  g_lux.setIntegrationTime(VEML7700_IT_100MS);
-  return true;
-}
-
-void luxPoll() {
-  I2cLock guard(20);
-  if (!guard.ok()) return;
-  g_luxValue = g_lux.readLux(VEML_LUX_NORMAL_NOWAIT);
-}
-
-// ------------------------------------------------------------------------------------
-void printStatus(uint32_t uptimeS, uint32_t imuSamplesPerSec) {
-  Serial.printf("[%5lu s] ", (unsigned long)uptimeS);
-  if (g_gpsOk) {
-    if (g_gps.fixOk) {
-      Serial.printf("GPS fix %d sats %2d spd %5.2f m/s (+-%4.2f) hAcc %5.1f m alt %6.1f m pvt %lu",
-                    g_gps.fixType, g_gps.siv, g_gps.speedMps, g_gps.speedAccMps, g_gps.hAccM, g_gps.altM,
-                    (unsigned long)g_gps.pvtCount);
-    } else {
-      Serial.printf("GPS no fix (type %d) sats %2d pvt %lu", g_gps.fixType, g_gps.siv,
-                    (unsigned long)g_gps.pvtCount);
-    }
-    if (g_gps.timeValid) {
-      Serial.printf(" %04u-%02u-%02u %02u:%02u:%02uZ", g_gps.year, g_gps.month, g_gps.day, g_gps.hour,
-                    g_gps.minute, g_gps.second);
-    }
-  } else {
-    Serial.print("GPS off");
-  }
-  Serial.print(" | ");
-  if (g_imuOk) {
-    Serial.printf("IMU a %+6.3f %+6.3f %+6.3f g  w %+7.2f %+7.2f %+7.2f dps  %lu/s",
-                  g_imuData.accel.xData / 1000.0f, g_imuData.accel.yData / 1000.0f,
-                  g_imuData.accel.zData / 1000.0f, g_imuData.gyro.xData / 1000.0f,
-                  g_imuData.gyro.yData / 1000.0f, g_imuData.gyro.zData / 1000.0f,
-                  (unsigned long)imuSamplesPerSec);
-  } else {
-    Serial.print("IMU off");
-  }
-  Serial.print(" | ");
-  if (g_luxOk) {
-    Serial.printf("lux %7.1f", g_luxValue);
-  } else {
-    Serial.print("lux off");
-  }
-  Serial.printf(" | BL %3u%% | i2c hold max %lu ms over %lu | heap %lu psram %lu\n", g_backlightPercent,
-                (unsigned long)I2cBus::longestHoldMs(), (unsigned long)I2cBus::overHoldCount(),
-                (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram());
+  Serial.println("ENDSNAP");
+  I2cBus::setQuiet(false);
 }
 
 void handleSerial() {
   while (Serial.available()) {
-    int c = Serial.read();
-    if (c >= '0' && c <= '9') {
-      uint8_t pct = (c == '0') ? 100 : (c - '0') * 10;
-      setBacklight(pct);
+    int ch = Serial.read();
+    if (ch >= '0' && ch <= '9') {
+      uint8_t pct = ch == '0' ? 100 : (ch - '0') * 10;
+      Sensors::setNightMode(0);
+      Sensors::setBrightness(pct);
       Serial.printf("backlight %u%%\n", pct);
-    } else if (c == 's') {
-      scanAndReport();
-    } else if (c == 'c') {
-      DisplayRgb::colourBars();
-    } else if (c == 'w') {
-      DisplayRgb::fill(DisplayRgb::RGB565_WHITE);
-    } else if (c == 'k') {
-      DisplayRgb::fill(DisplayRgb::RGB565_BLACK);
-    } else if (c == 'r') {
-      Serial.println("rebooting");
-      delay(50);
+    } else if (ch == 'd') {
+      Demo::setEnabled(!Demo::enabled());
+      Serial.printf("demo %s\n", Demo::enabled() ? "on" : "off");
+    } else if (ch == 'p') {
+      screenshot();
+    } else if (ch == 'i') {
+      uint8_t found[32];
+      size_t n = I2cBus::scan(found, sizeof(found));
+      Serial.printf("I2C: %u devices:", (unsigned)n);
+      for (size_t i = 0; i < n; i++) Serial.printf(" 0x%02X", found[i]);
+      Serial.println();
+    } else if (ch == 'n' || ch == 'x') {
+      LvLock lk;
+      if (ch == 'x') Ui::setPage(Ui::page() == Ui::PAGE_SETTINGS ? Ui::PAGE_DRIVE : Ui::PAGE_SETTINGS);
+      else Ui::setPage((Ui::Page)((Ui::page() >= Ui::PAGE_COUNT ? 0 : Ui::page() + 1) % Ui::PAGE_COUNT));
+    } else if (ch == 'D' || ch == 'R' || ch == 'Y' || ch == 'E' || ch == 'B') {
+      LvLock lk;
+      Ui::setPage(ch == 'D' ? Ui::PAGE_DRIVE : ch == 'R' ? Ui::PAGE_TRIP : ch == 'Y' ? Ui::PAGE_DYNAMICS
+                  : ch == 'E' ? Ui::PAGE_ENERGY : Ui::PAGE_BATTERY);
+    } else if (ch == 'a') {
+      LvglPort::logNextFrameAreas();
+    } else if (ch == 'T') {
+      static bool bypass = false;
+      bypass = !bypass;
+      LvglPort::setTouchBypass(bypass);
+      Serial.printf("touch bypass %s\n", bypass ? "on" : "off");
+    } else if (ch == 'r') {
       ESP.restart();
     }
   }
 }
-
 }  // namespace
 
-// ======================================================================================
 void setup() {
   Serial.begin(115200);
-  // USB CDC: give a host up to 3 s to open the port, then carry on regardless. The device
-  // must boot in the car with nothing listening.
   uint32_t t0 = millis();
-  while (!Serial && millis() - t0 < 3000) delay(10);
-  printBanner();
-
+  Vs::begin();
   I2cBus::begin();
-  scanAndReport();
-
-  g_expanderOk = IoExpander::begin();
-  Serial.printf("IO expander: %s\n", g_expanderOk ? "ok" : "NO ACK");
-
-  g_displayOk = (DisplayRgb::begin() != nullptr);
-  Serial.printf("RGB panel: %s\n", g_displayOk ? "ok (framebuffers in PSRAM)" : "FAILED");
-  if (g_displayOk) DisplayRgb::colourBars();
-
-  if (g_expanderOk) {
+  // The board controller takes a moment after power-on; bring-up only ever reached it after
+  // the scan. Retry briefly rather than wait a fixed time.
+  bool expander = false;
+  for (int i = 0; i < 10 && !expander; i++) {
+    expander = IoExpander::begin();
+    if (!expander) delay(30);
+  }
+  g_panel = DisplayRgb::begin();
+  if (g_panel) DisplayRgb::fill(0x0000);
+  if (expander) {
     IoExpander::setBacklightEnable(true);
-    setBacklight(100);
-    backlightRamp();
+    IoExpander::setBacklightPercent(100);
+  }
+  g_touchOk = TouchGt911::begin();
+  bool lv = LvglPort::begin(g_panel, g_touchOk);
+  if (lv) {
+    LvLock lk;
+    Theme::init();
+    Ui::Callbacks cb;
+    cb.setDemo = uiSetDemo;
+    cb.setNightMode = uiSetNight;
+    cb.calibrateMounting = uiCalibrate;
+    cb.resetTrip = uiResetTrip;
+    cb.resetPeaks = uiResetPeaks;
+    cb.clearRecords = uiClearRecords;
+    Ui::begin(cb, VERSION);
+  }
+  Serial.printf("\nmini-dash %s, built %s %s\n", VERSION, __DATE__, __TIME__);
+  Serial.printf("expander %s, panel %s, touch %s (%s), lvgl %s, splash at %lu ms\n", expander ? "ok" : "NO",
+                g_panel ? "ok" : "NO", g_touchOk ? "ok" : "NO", TouchGt911::productId(), lv ? "ok" : "NO",
+                (unsigned long)(millis() - t0));
+  {
+    VsLock lk;
+    if (lk.ok()) {
+      Vs::raw().diag.touchOk = g_touchOk;
+      strncpy(Vs::raw().diag.touchId, TouchGt911::productId(), sizeof(Vs::raw().diag.touchId) - 1);
+    }
   }
 
-  g_gpsOk = gpsBegin();
-  Serial.printf("GPS NEO-M9N: %s\n", g_gpsOk ? "ok" : "not found");
-  g_imuOk = imuBegin();
-  Serial.printf("IMU ISM330DHCX: %s\n", g_imuOk ? "ok" : "not found");
-  g_luxOk = luxBegin();
-  Serial.printf("Light VEML7700: %s\n", g_luxOk ? "ok" : "not found");
-  Serial.println("keys: s scan, 1..9/0 backlight 10..100%, c bars, w white, k black, r reboot");
-  I2cBus::resetStats();  // init holds are expected to be long; measure steady state from here
+  // Sensors and the trip engine come up behind the splash.
+  g_engine.reset(millis());
+  Sensors::start(&g_engine);
+  {
+    LvLock lk;
+    Ui::setBootStatus(Sensors::gpsOk() ? "GPS acquiring" : "GPS absent", "OBD off (phase 3c)",
+                      Sensors::imuOk() ? "IMU ready" : "IMU absent");
+  }
+  Demo::start(&g_engine);
+  Demo::setEnabled(true);  // bench default while phase 3b is under way
+  Serial.println("keys: d demo, 1..9/0 backlight, p screenshot, n next tab, D/R/Y/E/B page, x settings, i scan, r reboot");
 }
 
 void loop() {
-  static uint32_t lastPrint = 0;
-  static uint32_t lastLux = 0;
-  static uint32_t lastImuSamples = 0;
-
-  if (g_imuOk) imuPoll();
-  if (g_gpsOk) gpsPoll();
-
-  uint32_t now = millis();
-  if (g_luxOk && now - lastLux >= LUX_PERIOD_MS) {
-    lastLux = now;
-    luxPoll();
-  }
-  if (now - lastPrint >= 1000) {
-    lastPrint = now;
-    uint32_t perSec = g_imuData.samples - lastImuSamples;
-    lastImuSamples = g_imuData.samples;
-    printStatus(now / 1000, perSec);
-  }
   handleSerial();
-  delay(1);
+  static uint32_t last = 0;
+  if (millis() - last >= 5000) {
+    last = millis();
+    VehicleState vs;
+    Vs::snapshot(vs);
+    uint32_t fl, to, wt, hm, ha, tk, pl, tmx, tav, tf, tc;
+    LvglPort::stats(&fl, &to, &wt, &hm, &ha);
+    LvglPort::touchStats(&tmx, &tav, &tf, &tc);
+    Ui::timing(&tk, &pl);
+    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | heap %lu psram %lu i2c %lu ms by %s\n",
+                  (unsigned long)(millis() / 1000), (int)Ui::page(), vs.demo, vs.disp.speedKph, vs.motion.latG,
+                  vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz,
+                  (unsigned long)LvglPort::frameCount(), (unsigned long)fl, (unsigned long)wt, (unsigned long)to,
+                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
+                  (unsigned long)I2cBus::longestHoldMs(), I2cBus::longestHolder());
+  }
+  delay(10);
 }

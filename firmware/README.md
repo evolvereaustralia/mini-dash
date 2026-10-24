@@ -20,6 +20,55 @@ cd firmware && pio run -t upload && pio device monitor
 
 The 4.3C's single USB-C port is native USB with auto-reset. If upload fails: hold BOOT, press and release RESET, release BOOT, upload, press RESET.
 
+## Phase 3b: the product firmware (`env:minidash`, the default)
+
+`src/main.cpp` boots in this order so the screen is on within a second (splash at about 410 ms on the bench): serial, I2C, IO expander (retried, it is slow to wake), RGB panel, GT911, LVGL and the splash; then the sensor task on core 0 and the demo replay. LVGL runs on core 1 with a 100 ms UI tick.
+
+Serial keys: `d` demo replay on/off, `1`..`9`/`0` backlight, `p` screenshot, `n` next tab, `D` `R` `Y` `E` `B` a page (Drive, Trip, Dynamics, Energy, Battery), `x` Settings, `a` log the next frame's invalidated areas, `T` bypass the touch read (diagnostic), `i` I2C scan, `r` reboot. A status line prints every 5 s with render and I2C statistics.
+
+Screenshots from the Mac, over the same USB cable (needs pyserial and Pillow):
+
+```bash
+python3 firmware/tools/screenshot.py /dev/cu.usbmodem1101 shot.png --key Y
+```
+
+### Display pipeline and what it costs
+
+LVGL 8.4 renders dirty areas in partial mode into a 40-row draw buffer in internal RAM; each flushed chunk is copied into the back framebuffer in PSRAM; on the last chunk the panel is told to switch to that buffer, we wait for the frame-complete event, then copy the same rows into the new back buffer so the two stay identical. No tearing, no full-screen redraw. LVGL's hot draw routines are placed in IRAM (`LV_ATTRIBUTE_FAST_MEM`). Measured 24 Oct 2026 on Drive with the demo running: about 55 ms of render per frame, one frame per 100 ms tick, longest I2C hold 24 ms. Two earlier approaches were measured and dropped: direct mode into the PSRAM framebuffers (about 150 ms of per-pixel blending per frame) and a canvas-only G plot redrawn every tick (whole-plot invalidation each frame). The remaining cost is dominated by anti-aliased text and lines; the 30 fps target in CLAUDE.md section 7 of the handoff is not met yet and the tick stays at 10 Hz until it is.
+
+### Layout
+
+```
+firmware/
+  include/lv_conf.h         Waveshare's 4.3C config, adapted (see its header)
+  include/vehicle_state.h   the shared state and stale thresholds
+  src/app/
+    lvgl_port.*             display pipeline above, touch input, tick, LVGL task and lock
+    touch_gt911.*           GT911 on Wire through the I2C mutex
+    vehicle_state.cpp       the state lock
+    sensors.*               sensor task: GPS, IMU, lux, night mode, static mounting reference
+    trip_engine.*           trip integration, timers, records (source agnostic)
+    demo_source.*           scripted drive feeding the same state and engine
+  src/ui/
+    theme.*                 palette, type scale, widget helpers
+    gplot.*                 the G plot (canvas background and cloud, object trail and dot)
+    ui.*                    splash, header, tab bar, the five pages, Settings
+    fonts/                  Inter converted with lv_font_conv (see below)
+    img_mini_wings.c        the splash emblem (RGB565 plus alpha)
+  src/bringup/              phase 3a bring-up program (env:bringup)
+  tools/screenshot.py       screenshot over serial
+```
+
+### Fonts
+
+Inter 4.1 (SIL OFL) with the tabular-figures feature frozen into the default digits with fontTools (Inter's default digits are proportional), then converted with lv_font_conv 1.5.3 at 4 bpp, uncompressed: Medium 88 and 60 (digits and signs only), Medium 40/34/30/28/26, Regular 18/16/14, SemiBold 26/16 (ASCII plus – — · ° ± − ← → ↻ ☼). About 600 KB of flash. Regenerate with the recipe in docs/design/README.md.
+
+### Done and not done in 3b (24 Oct 2026)
+
+Done: LVGL on the panel with touch, splash with the emblem, header status cluster, five tabs with swipe, Settings by header tap, Drive, Trip (records, journey totals, event page without traces), Dynamics, Energy, Battery, demo replay, the trip and records engine, GPS, IMU and lux into the state, night mode from lux, screenshot tool.
+
+Not yet: records and trip history storage (Today and All time are since power-on only), event trace capture, the gyro-propagated attitude (the IMU path uses a static mounting reference and a 5 Hz low-pass), the GPS and accelerometer speed fusion (displayed speed is wheel speed when OBD is live, else raw GPS), timezone and DST (the clock adds 11 h), start-screen preference, WiFi OTA, units persistence, the 30 fps target, and the GPS poll's 80 to 108 ms bus holds seen after two minutes (docs/test-log.md).
+
 ## Phase 3a: bring-up (`env:bringup`)
 
 `src/main.cpp` proves, in order: USB CDC serial, flash and PSRAM, the I2C map against `include/board_config.h`, the IO expander (backlight ramp 100 to 0 to 100), the RGB panel (colour bars, white, yellow, cyan, green, magenta, red, blue, black left to right), the NEO-M9N at 10 Hz PVT, the ISM330DHCX at 208 Hz, the VEML7700 at 1 Hz. Then one line per second:
