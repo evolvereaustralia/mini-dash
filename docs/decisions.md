@@ -54,4 +54,7 @@ One line of reasoning per decision, dated. Newest at the bottom. Hardware and ar
 - 2026-10-24: File writes no longer go through a temporary file and rename; LittleFS updates a file atomically on close, and each extra step cost erases.
 - 2026-10-24: On Drive, battery power takes the large right-hand slot and state of charge the smaller left one, because power changes every second and SOC barely moves (Logan).
 - 2026-10-24: Drive's pack line shows the HV pack's current temperature and voltage, not the 12 V battery, which barely moves and matters only when failing; it stays on the Battery page (Logan).
-
+- 2026-10-24: The firmware builds on an Arduino core rebuilt from ESP-IDF with code and read-only data executing from PSRAM and the RGB refill interrupt IRAM-safe (env minidash-xip, the default). Measured: a flash write stalls PSRAM access for 1.5 to 1.8 ms instead of 19 to 20 ms, so writes are immediate on this build. Env minidash (prebuilt core) stays as a fallback with the standstill deferral; MINIDASH_XIP selects the behaviour.
+- 2026-10-24: Stay on one env. The hybrid build swaps the prebuilt libraries package in place, and each switch between minidash-xip and minidash or bringup costs a three-minute rebuild.
+- 2026-10-24: pioarduino's tool-scons version check is patched per machine in the platform's platform.json (firmware/README.md). A workaround inside the project (pinning the package, pre-importing SCons modules) could not work because the platform deletes the tool before any project script runs.
+- 2026-10-24: Event files whose trip has no trip file are removed at boot (demo trips, trips lost before their first checkpoint), so demo traces do not accumulate on the partition.

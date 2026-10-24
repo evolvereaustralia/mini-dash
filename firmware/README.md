@@ -20,7 +20,29 @@ cd firmware && pio run -t upload && pio device monitor
 
 The 4.3C's single USB-C port is native USB with auto-reset. If upload fails: hold BOOT, press and release RESET, release BOOT, upload, press RESET.
 
-## Phase 3b: the product firmware (`env:minidash`, the default)
+## Framework rebuild (`env:minidash-xip`, the default since 24 Oct 2026)
+
+The product firmware is built on an Arduino core rebuilt from ESP-IDF 5.5.5 with four options the prebuilt core lacks: `CONFIG_SPIRAM_XIP_FROM_PSRAM`, `CONFIG_SPIRAM_FETCH_INSTRUCTIONS`, `CONFIG_SPIRAM_RODATA` (code and read-only data are copied into PSRAM at boot and executed from there, so a flash write no longer takes the PSRAM cache down with the flash cache) and `CONFIG_LCD_RGB_ISR_IRAM_SAFE` (the panel's bounce-buffer refill interrupt keeps running during a flash write). Without them every flash write froze the panel refill for the duration of a block erase and the glass repeated stale ten-line strips (banded digits, ghost text; docs/test-log.md, 24 Oct 2026). Measured with the bench proxy, serial key `Z` (a 1 ms task touching the PSRAM frame buffer records its longest stall while five event files are written): prebuilt core 19 to 20 ms, rebuilt core 1.5 to 1.8 ms, the same as idle. The rebuilt core costs about 1 MB of PSRAM for the copied code (free PSRAM 5.0 MB instead of 6.0 MB), renders faster (the UI handler averages 26 to 30 ms instead of 39 to 80 ms, flash cache misses being slower than PSRAM) and boots in the same time. On this env flash writes are immediate: event traces on acceptance, the checkpoint every 30 s. `env:minidash` is the same firmware on the prebuilt core, kept as a fallback that needs no rebuild; on it writes are deferred to standstills and traces held back (`MINIDASH_XIP` is the switch, in `src/main.cpp`).
+
+pioarduino does the rebuild itself ("hybrid build", `custom_sdkconfig` in `platformio.ini`): the first build downloads ESP-IDF and compiles the libraries, about three minutes and a few hundred megabytes; later builds take 20 s. The rebuilt libraries replace the prebuilt `framework-arduinoespressif32-libs` package in place, so every switch between `minidash-xip` and `minidash` (or `bringup`) swaps the package and triggers another three-minute rebuild. Stay on one env. The hybrid build ignores `build_src_filter` (the bring-up program guards itself with `MINIDASH_BRINGUP`), needs the partition CSV inside the project folder (`app3M_fat9M_16MB.csv`, copied from the core) and leaves `.dummy/`, `managed_components/`, `CMakeLists.txt`, `sdkconfig*` and `dependencies.lock` in the project, all ignored by git.
+
+Per-machine fix, needed once per PlatformIO installation (24 Oct 2026, platform 55.03.311, PlatformIO Core 6.2.0): the hybrid build runs the platform's own tool version check on `tool-scons`. The installed package is 4.41101.0 (SCons 4.11.1, what Core 6.2 runs on) but the platform's `platform.json` lists 4.40801.0, so the check deletes the package directory to reinstall it, neither reinstall path applies, and the link step dies with `ModuleNotFoundError: No module named 'SCons.Tool.FortranCommon'` although nothing is wrong with the project. Point the platform at the version it actually runs:
+
+```bash
+python3 - <<'EOF'
+import json, pathlib, shutil
+p = pathlib.Path.home() / ".platformio/platforms/espressif32/platform.json"
+shutil.copy2(p, p.with_suffix(".json.orig"))
+d = json.loads(p.read_text())
+d["packages"]["tool-scons"]["package-version"] = "4.41101.0"
+d["packages"]["tool-scons"]["version"] = "https://github.com/pioarduino/scons/releases/download/4.11.1/scons-local-4.11.1.tar.gz"
+p.write_text(json.dumps(d, indent=2) + "\n")
+EOF
+```
+
+A platform upgrade overwrites the file; if the error above comes back, run it again. Worth reporting upstream to pioarduino (platform.py, `install_tool` on `tool-scons` for `custom_sdkconfig` builds) when there is time.
+
+## Phase 3b: the product firmware (`env:minidash`, prebuilt core)
 
 `src/main.cpp` boots in this order so the screen is on within a second (splash at about 410 ms on the bench): serial, I2C, IO expander (retried, it is slow to wake), RGB panel, GT911, LVGL and the splash; then the sensor task on core 0 and the demo replay. LVGL runs on core 1 with a 100 ms UI tick.
 
@@ -65,7 +87,7 @@ firmware/
 
 ### Storage and clock
 
-`src/app/storage.*`: NVS (Preferences, namespace `minidash`) holds settings, the mounting reference, the lifetime records and the trip id counter; LittleFS on the `ffat` partition (the 9 MB the partition scheme sets aside, formatted on first use) holds `/trips/<id>.trp` (last 60, binary with a magic and version), `/events/<id>-<rec>.evt` (12 s of speed, G and power at 10 Hz) and `/active.trp`, the checkpoint written every 30 s while a non-demo trip has distance. At boot a checkpoint is closed into a trip file: a trip ends at power loss by design. Demo trips are never stored. All file writes are deferred until the displayed speed has been under 2 km/h for 2 s (or the trip ends, or a checkpoint is 10 min overdue): a flash write blocks PSRAM reads and the panel's bounce buffers then repeat stale ten-line strips, which is visible as banded digits and ghost text unless the picture is static. Key `V` suppresses event saves entirely for diagnosis; `I` forces immediate writes. The complete fix is a framework built with execute-from-PSRAM and the IRAM-safe panel interrupt (env `minidash-xip`), currently blocked by a pioarduino tooling failure noted in `platformio.ini`. `src/app/clock.*`: PCF85063A RTC read at boot, set from GPS once, UTC everywhere, Melbourne local time with the DST rule for display and day grouping. Serial keys `W` and `X` write and remove self-test trip and event files; `e` opens the first record's event page.
+`src/app/storage.*`: NVS (Preferences, namespace `minidash`) holds settings, the mounting reference, the lifetime records and the trip id counter; LittleFS on the `ffat` partition (the 9 MB the partition scheme sets aside, formatted on first use) holds `/trips/<id>.trp` (last 60, binary with a magic and version), `/events/<id>-<rec>.evt` (12 s of speed, G and power at 10 Hz) and `/active.trp`, the checkpoint written every 30 s while a non-demo trip has distance. At boot a checkpoint is closed into a trip file: a trip ends at power loss by design. Demo trips are never stored. On the prebuilt core all file writes are deferred until the displayed speed has been under 2 km/h for 2 s (or the trip ends, or a checkpoint is 10 min overdue): there a flash write blocks PSRAM reads and the panel's bounce buffers then repeat stale ten-line strips, which is visible as banded digits and ghost text unless the picture is static. Key `V` suppresses event saves entirely for diagnosis; `I` forces immediate writes. On the rebuilt framework (env `minidash-xip`, the default) writes are immediate; the deferral applies to the prebuilt core only (`MINIDASH_XIP`). At boot, event files whose trip has no trip file (demo trips, trips lost before their first checkpoint) are removed. `src/app/clock.*`: PCF85063A RTC read at boot, set from GPS once, UTC everywhere, Melbourne local time with the DST rule for display and day grouping. Serial keys `W` and `X` write and remove self-test trip and event files; `e` opens the first record's event page.
 
 ### Fonts
 

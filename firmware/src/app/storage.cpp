@@ -187,6 +187,40 @@ void deleteEvents(uint32_t tripId) {
   }
 }
 
+// Event traces are written when a record is accepted, before anyone knows whether the trip
+// will be saved. Demo trips never are, and a trip ended by a power cut before its first
+// checkpoint leaves its traces behind too. At boot, after the checkpoint has been closed into
+// a trip file, every event file whose trip id has no trip file is an orphan. A bounded batch
+// per pass; the directory is not iterated while files are removed from it.
+int pruneOrphanEvents() {
+  if (!g_fsOk) return 0;
+  uint32_t ids[MAX_TRIPS + 4];
+  int n = listTrips(ids, MAX_TRIPS + 4);
+  int removed = 0;
+  for (int pass = 0; pass < 16; pass++) {
+    char victims[32][40];
+    int v = 0;
+    File dir = LittleFS.open("/events");
+    if (!dir || !dir.isDirectory()) break;
+    File e;
+    while (v < 32 && (e = dir.openNextFile())) {
+      const char *name = e.name();
+      const char *base = strrchr(name, '/');
+      base = base ? base + 1 : name;
+      uint32_t id = strtoul(base, nullptr, 10);
+      bool kept = false;
+      for (int i = 0; i < n && !kept; i++) kept = ids[i] == id;
+      if (!kept) snprintf(victims[v++], sizeof(victims[0]), "/events/%s", base);
+      e.close();
+    }
+    dir.close();
+    for (int i = 0; i < v; i++) removed += LittleFS.remove(victims[i]) ? 1 : 0;
+    if (v < 32) break;
+  }
+  if (removed) Serial.printf("storage: %d orphaned event files removed, %u KB used\n", removed, (unsigned)(LittleFS.usedBytes() / 1024));
+  return removed;
+}
+
 bool saveActive(const TripSummary &t) { return g_fsOk && writeTrip("/active.trp", t); }
 bool loadActive(TripSummary &out) { return g_fsOk && LittleFS.exists("/active.trp") && readTrip("/active.trp", out); }
 void clearActive() {

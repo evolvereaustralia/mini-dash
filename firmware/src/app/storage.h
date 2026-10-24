@@ -70,6 +70,7 @@ int tripCount();
 bool loadTrip(int indexFromNewest, TripSummary &out);
 bool saveTrip(const TripSummary &t);  // rotates beyond MAX_TRIPS (oldest deleted with its events)
 void deleteEvents(uint32_t tripId);   // for a trip that is discarded rather than saved
+int pruneOrphanEvents();              // at boot: remove event files whose trip has no trip file (demo trips, power cuts)
 
 // Active trip checkpoint (every CHECKPOINT_MS). At boot, a checkpoint found on disk is the
 // previous trip ended by power loss: finalise it with closeActive().

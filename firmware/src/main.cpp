@@ -110,16 +110,25 @@ void saveSettings(const Ui::UiSettings &u) {
   Storage::saveSettings(g_settings);
 }
 
-// Flash writes are deferred until the car has been still for 2 s (or the trip ends, or a
-// checkpoint is 10 min overdue). While the chip writes flash it cannot read PSRAM, and the
-// panel's bounce buffers then repeat stale ten-line strips: banded digits and ghost text
-// (Logan's photos, 24 Oct 2026). When nothing on screen moves, the stale strips are identical
-// to the live ones and the write is invisible.
-// Event traces and checkpoints are held back entirely until flash writes stop disturbing the
-// panel (framework rebuild or SD card, see docs/test-log.md); key V toggles them for tests.
-// Settings and lifetime records still write, rarely and at standstill.
-volatile bool g_suppressWrites = true;
-volatile bool g_immediateWrites = false; // diagnostics key I: write at once, ignoring the still rule
+// Flash writes and the panel. While the chip writes flash it cannot fetch code or constants
+// from flash, and on the prebuilt Arduino core the PSRAM cache goes down with it, so the
+// panel's bounce-buffer refill interrupt stalls and the glass repeats stale ten-line strips:
+// banded digits and ghost text (Logan's photos and videos, 24 Oct 2026). On that core the
+// writes are deferred until the car has been still for 2 s (or the trip ends, or a checkpoint
+// is 10 min overdue), and event traces and checkpoints are held back entirely by default.
+// Env minidash-xip rebuilds the core with code and read-only data executing from PSRAM and
+// the refill interrupt IRAM-safe (CONFIG_SPIRAM_XIP_FROM_PSRAM, CONFIG_LCD_RGB_ISR_IRAM_SAFE):
+// measured on the bench 24 Oct 2026 with key Z, a flash write then stalls PSRAM access for no
+// longer than the idle jitter (1.5 to 1.8 ms, against 19 to 20 ms on the prebuilt core), so
+// that build writes at once, as the brief asks (traces saved on acceptance, checkpoint every
+// 30 s). Keys V and I toggle the two behaviours at run time for tests.
+#ifdef MINIDASH_XIP
+constexpr bool WRITES_STALL_PANEL = false;
+#else
+constexpr bool WRITES_STALL_PANEL = true;
+#endif
+volatile bool g_suppressWrites = WRITES_STALL_PANEL;    // hold back event traces and checkpoints
+volatile bool g_immediateWrites = !WRITES_STALL_PANEL;  // write at once, ignoring the still rule
 struct PendingEvent {
   bool pending = false;
   uint32_t tripId = 0;
@@ -236,6 +245,50 @@ void screenshot() {
   I2cBus::setQuiet(false);
 }
 
+// Flash-write stall test (key Z). A high-priority task on the LVGL core touches the PSRAM
+// framebuffer every millisecond and records the longest gap between touches while five event
+// files are written. With the prebuilt framework the cache is off for every write, so the gap
+// is the write duration (tens of ms); with code executing from PSRAM it should stay near 1 ms.
+// This is the bench proxy for "does a flash write stall the panel refill" since the glass
+// itself cannot be read back.
+volatile uint32_t g_stallMaxUs = 0;
+volatile bool g_stallRun = false;
+void stallProbe(void *) {
+  void *fb0 = nullptr, *fb1 = nullptr;
+  DisplayRgb::getFrameBuffers(&fb0, &fb1);
+  volatile uint32_t *p = static_cast<volatile uint32_t *>(fb0);
+  uint32_t last = micros();
+  uint32_t sink = 0;
+  while (g_stallRun) {
+    for (int i = 0; i < 64; i++) sink += p[i * 4096];  // 64 reads spread over the frame buffer
+    uint32_t now = micros();
+    if (now - last > g_stallMaxUs) g_stallMaxUs = now - last;
+    last = now;
+    vTaskDelay(1);
+  }
+  (void)sink;
+  vTaskDelete(nullptr);
+}
+void stallTest() {
+  g_stallMaxUs = 0;
+  g_stallRun = true;
+  xTaskCreatePinnedToCore(stallProbe, "stall", 3072, nullptr, 5, nullptr, 1);
+  delay(300);
+  uint32_t idle = g_stallMaxUs;  // baseline without writes
+  g_stallMaxUs = 0;
+  Storage::TraceSample tr[Storage::TRACE_MAX];
+  for (size_t i = 0; i < Storage::TRACE_MAX; i++) tr[i] = {(uint16_t)i, (int16_t)(i * 10), 0, 0, (int16_t)i};
+  uint32_t t0 = millis();
+  for (int k = 0; k < 5; k++) Storage::saveEvent(999000 + k, 0, tr, Storage::TRACE_MAX);
+  uint32_t writeMs = millis() - t0;
+  delay(100);
+  g_stallRun = false;
+  delay(20);
+  Serial.printf("stall test: idle max gap %lu us; during 5 event writes (%lu ms total) max gap %lu us\n",
+                (unsigned long)idle, (unsigned long)writeMs, (unsigned long)g_stallMaxUs);
+  for (int k = 0; k < 5; k++) Storage::deleteEvents(999000 + k);
+}
+
 void handleSerial() {
   while (Serial.available()) {
     int ch = Serial.read();
@@ -304,6 +357,8 @@ void handleSerial() {
     } else if (ch == 'I') {
       g_immediateWrites = !g_immediateWrites;
       Serial.printf("immediate writes %s\n", g_immediateWrites ? "on" : "off");
+    } else if (ch == 'Z') {
+      stallTest();
     } else if (ch == 'V') {
       g_suppressWrites = !g_suppressWrites;
       Serial.printf("event saves %s\n", g_suppressWrites ? "suppressed" : "enabled");
@@ -371,6 +426,10 @@ void setup() {
     }
   }
 
+  Serial.printf("framework: %s\n", WRITES_STALL_PANEL
+                                      ? "prebuilt core, flash writes deferred to standstills and traces held back"
+                                      : "code and constants execute from PSRAM, flash writes immediate");
+
   // Storage and clock, then the previous trip if a power cut left its checkpoint.
   Storage::begin();
   bool rtc = Clock::begin();
@@ -391,6 +450,7 @@ void setup() {
     Serial.printf("storage: trip %lu ended by power loss, %.1f km, closing it\n", (unsigned long)leftover.id, leftover.trip.distanceKm);
     finishTrip(true, &leftover);
   }
+  Storage::pruneOrphanEvents();  // traces of demo and unsaved trips from earlier boots
   RecordSet lifetime;
   Storage::loadLifetime(lifetime);
   g_engine.setLifetime(lifetime);
