@@ -187,25 +187,26 @@ void bestNextCb(lv_event_t *) {
 }
 
 void buildDrive(lv_obj_t *p) {
-  // Baseline grid (content coordinates). Captions on 24, big figures on 104 (speed) and 84
-  // (SOC), second captions on 166, second figures on 198, small lines on 240 and 262, footer
-  // text on 346. Left column at x 20, right column ending at x 780, plot centred on 400.
+  // Baseline grid (content coordinates), each side column spread over the plot's height:
+  // group 1 caption 24, big figure 110 (speed) / 92 (SOC), small line 136; group 2 caption
+  // 192, figure 226; group 3 on 268 and 292 (scale and "Drawing" left, caption and pack
+  // figure right); footer text 346. Left column at x 20, right ending at x 780, plot on 400.
   // left column
   caption(p, 20, yForBaseline(&inter_rg_16, 24), "SPEED");
   D.srcPill = pill(p, 92, 6, "GPS", MUTED);
   D.srcL = buttonLabel(D.srcPill);
-  D.speed = blabel(p, &inter_md_88, FG, 16, 104, "—");
-  D.sub = blabel(p, &inter_rg_16, MUTED, 20, 128, "km/h");
-  caption(p, 20, yForBaseline(&inter_rg_16, 166), "BATTERY POWER");
-  D.power = blabel(p, &inter_md_30, FG, 20, 198, "—");
-  lv_obj_t *track = panel(p, 20, 212, PBAR_W, 10, LINE, 3);
+  D.speed = blabel(p, &inter_md_88, FG, 16, 110, "—");
+  D.sub = blabel(p, &inter_rg_16, MUTED, 20, 136, "km/h");
+  caption(p, 20, yForBaseline(&inter_rg_16, 192), "BATTERY POWER");
+  D.power = blabel(p, &inter_md_30, FG, 20, 226, "—");
+  lv_obj_t *track = panel(p, 20, 240, PBAR_W, 10, LINE, 3);
   D.pFill = panel(track, (int)(PBAR_W * PBAR_ZERO), 0, 0, 10, LIME, 0);
   lv_obj_t *zero = panel(track, (int)(PBAR_W * PBAR_ZERO) - 1, -2, 2, 14, FG, 0);
   (void)zero;
-  blabel(p, &inter_rg_14, MUTED, 20, 240, "−60");
-  blabel(p, &inter_rg_14, MUTED, 20 + (int)(PBAR_W * PBAR_ZERO) - 4, 240, "0");
-  brlabel(p, &inter_rg_14, MUTED, 20 + PBAR_W, 240, 70, "+150 kW");
-  D.pWord = blabel(p, &inter_rg_16, MUTED, 20, 262, "No car data");
+  blabel(p, &inter_rg_14, MUTED, 20, 268, "−60");
+  blabel(p, &inter_rg_14, MUTED, 20 + (int)(PBAR_W * PBAR_ZERO) - 4, 268, "0");
+  brlabel(p, &inter_rg_14, MUTED, 20 + PBAR_W, 268, 70, "+150 kW");
+  D.pWord = blabel(p, &inter_rg_16, MUTED, 20, 292, "No car data");
 
   // centre
   D.plot.create(p, 255, 2, 290);
@@ -213,16 +214,18 @@ void buildDrive(lv_obj_t *p) {
   // right column, ending at x = 780
   brlabel(p, &inter_rg_16, MUTED, 780, 24, 220, "STATE OF CHARGE");
   lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
-  D.soc = brlabel(p, &inter_md_60, FG, 748, 84, 140, "—");
-  D.socPct = brlabel(p, &inter_md_28, MUTED, 780, 84, 30, "%");
-  lv_obj_t *strack = panel(p, 580, 96, 200, 10, LINE, 3);
+  D.soc = brlabel(p, &inter_md_60, FG, 748, 92, 140, "—");
+  D.socPct = brlabel(p, &inter_md_28, MUTED, 780, 92, 30, "%");
+  lv_obj_t *strack = panel(p, 580, 104, 200, 10, LINE, 3);
   D.socWin = panel(strack, 0, 0, 200, 10, PANEL2, 3);
   D.socFill = panel(strack, 0, 0, 0, 10, LIME, 3);
-  brlabel(p, &inter_rg_16, MUTED, 780, 128, 200, "Displayed SOC");
-  brlabel(p, &inter_rg_16, MUTED, 780, 166, 200, "RANGE · CAR");
+  brlabel(p, &inter_rg_16, MUTED, 780, 136, 200, "Displayed SOC");
+  brlabel(p, &inter_rg_16, MUTED, 780, 192, 200, "RANGE · CAR");
   lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
-  D.range = brlabel(p, &inter_md_30, FG, 780, 198, 200, "—");
-  D.packLine = brlabel(p, &inter_rg_16, MUTED, 780, 262, 300, "Pack — · 12 V —");
+  D.range = brlabel(p, &inter_md_30, FG, 780, 226, 200, "—");
+  brlabel(p, &inter_rg_16, MUTED, 780, 268, 200, "PACK · 12 V");
+  lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
+  D.packLine = brlabel(p, &inter_md_26, FG, 780, 292, 300, "—");
 
   // footer: three cells on one baseline, left-aligned, centred, right-aligned
   rule(p, 20, 304, 760);
@@ -317,14 +320,16 @@ void updateDrive() {
     lv_obj_set_width(D.socFill, (int)(g_vs.car.socPct * 2) - x0);
     setTextF(D.range, "%d km", (int)lroundf(g_vs.car.rangeKm));
     setColor(D.range, FG);
-    setTextF(D.packLine, "Pack %.0f °C avg · %.1f V", g_vs.car.tempAvg, g_vs.car.v12);
+    setTextF(D.packLine, "%.0f °C · %.1f V", g_vs.car.tempAvg, g_vs.car.v12);
+    setColor(D.packLine, FG);
   } else {
     setText(D.soc, "—");
     setColor(D.soc, MUTED);
     lv_obj_set_width(D.socFill, 0);
     setText(D.range, "— km");
     setColor(D.range, MUTED);
-    setText(D.packLine, "Pack — · 12 V —");
+    setText(D.packLine, "—");
+    setColor(D.packLine, MUTED);
   }
 
   bool mv = motionFresh();
