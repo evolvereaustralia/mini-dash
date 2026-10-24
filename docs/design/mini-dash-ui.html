@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en" style="color-scheme:dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=800">
+<title>Mini Dash UI, merged design prototype</title>
+<!--
+  Mini Dash merged UI prototype, 24 Oct 2026. Fixed 800 x 480, one CSS pixel per panel pixel.
+  Merges the Logan/CLAUDE.md feature set (pages, timers, status bar, night mode, stale rules)
+  with the telemetry design handoff (docs/design/handoff: palette, six tabs, Trip records,
+  G plot, type hierarchy). Synthetic data throughout. Not firmware.
+
+  Open in a browser and click the tabs, the header (Settings), the Trip tiles, the scopes,
+  the Drive trip-best field, and "Journey totals". Query parameters select a state for
+  rendering: ?screen=Drive|Trip|Dynamics|Energy|Battery|Settings|Splash
+  &scene=Corner|Accelerate|Regen|Still &scope=trip|today|all &view=records|journey
+  &event=0..5 &obd=1|0 &best=0..5 &fix=1|0. Charge was dropped on 24 Oct 2026: the device is
+  switched off when the car is parked or charging, so it could never show live charging data.
+-->
+<style>
+:root{
+  --bg:#0b1114; --panel:#121c21; --panel2:#182429; --fg:#edf4ee; --muted:#99acb4; --line:#2b3a42;
+  --lime:#c7f46b; --cyan:#64d9e0; --amber:#f2b84b; --red:#f0645a; --cloud:#5f7f8c;
+}
+html,body{margin:0;background:#06090b}
+body{font-family:Inter,"Helvetica Neue",Arial,sans-serif;color:var(--fg);-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.panel{position:relative;width:800px;height:480px;margin:0 auto;background:var(--bg);overflow:hidden;
+  font-variant-numeric:tabular-nums;display:flex;flex-direction:column}
+/* header 50 */
+.top{height:50px;flex:none;display:flex;align-items:center;gap:16px;padding:0 20px;border-bottom:1px solid var(--line)}
+.brand{font-size:17px;font-weight:700;letter-spacing:3px}
+.brand small{color:var(--lime);font-weight:600;letter-spacing:2px;font-size:13px;margin-left:10px}
+.status{margin-left:auto;display:flex;align-items:center;gap:18px;font-size:16px;letter-spacing:.5px;color:var(--muted)}
+.status b{color:var(--fg);font-weight:500}
+.status .ok{color:var(--lime)}
+.status .warn{color:var(--amber)}
+.status .pill{border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:14px;letter-spacing:1px}
+.status .pill.ok{border-color:var(--lime)}
+.status .clock{font-size:18px;color:var(--fg)}
+/* content 366 */
+.content{height:366px;flex:none;padding:14px 20px 10px;position:relative}
+.label{color:var(--muted);font-size:16px;letter-spacing:1.2px;text-transform:uppercase;line-height:1.1}
+.label.sm{font-size:14px;letter-spacing:1px}
+.unit{font-size:18px;color:var(--muted);letter-spacing:0;font-weight:400}
+.num-xl{font-size:88px;font-weight:500;letter-spacing:-5px;line-height:1.0;margin:2px 0 0}
+.num-l{font-size:60px;font-weight:500;letter-spacing:-3px;line-height:1.05;margin:2px 0 0}
+.num-m{font-size:40px;font-weight:500;letter-spacing:-1.5px;line-height:1.1;margin:2px 0}
+.num-s{font-size:30px;font-weight:500;letter-spacing:-1px;line-height:1.15;margin:2px 0}
+.small{font-size:16px;color:var(--muted);line-height:1.4}
+.src{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:5px;border:1px solid var(--line);font-size:13px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;vertical-align:middle}
+.src.live{color:var(--lime);border-color:var(--lime)}
+.stale{color:var(--muted)!important;opacity:.55}
+/* nav 64 */
+nav{height:64px;flex:none;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line)}
+nav button{border-top:3px solid transparent;color:var(--muted);font-size:16px;letter-spacing:1.5px}
+nav button[aria-pressed=true]{border-top-color:var(--lime);color:var(--fg);background:var(--panel)}
+/* Drive */
+.drive{display:grid;grid-template-columns:200px 1fr 200px;gap:12px;height:290px}
+.drive .col{display:flex;flex-direction:column;justify-content:flex-start}
+.drive .right{text-align:right}
+.drive .block{margin-top:14px}
+.gg{display:block;width:290px;height:290px;margin:-6px auto 0;overflow:visible}
+.gg text{fill:var(--muted);font-size:14px;letter-spacing:1px}
+.gg .grid{stroke:var(--line);fill:none}
+.gg .trace{stroke:var(--lime);fill:none;stroke-width:2.5;stroke-linecap:round}
+.gg .dot{fill:var(--lime)}
+.gg .peak{fill:none;stroke:var(--muted);stroke-width:1.5}
+.pbar{position:relative;height:10px;background:var(--line);border-radius:3px;margin:10px 0 6px;overflow:hidden}
+.pbar .zero{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--fg);left:28.5%}
+.pbar .fill{position:absolute;top:0;bottom:0}
+.pbar .fill.draw{background:var(--lime)}
+.pbar .fill.regen{background:var(--cyan)}
+.pbar-scale{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);letter-spacing:.5px}
+.track{height:10px;background:var(--line);border-radius:3px;margin:8px 0 6px;position:relative;overflow:hidden}
+.track .win{position:absolute;top:0;bottom:0;background:var(--panel2)}
+.track .fill{position:absolute;top:0;bottom:0;background:var(--lime)}
+.foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);height:52px}
+.foot .kv{font-size:16px;color:var(--muted)}
+.foot .kv b{font-size:26px;font-weight:500;color:var(--fg);margin-left:8px;letter-spacing:-.5px}
+.foot button.kv{height:52px;padding:0 10px;border-radius:8px;display:flex;align-items:center;gap:8px}
+.foot button.kv b{color:var(--lime)}
+.foot button.kv .cyc{font-size:20px;color:var(--muted)}
+/* Trip */
+.trip-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;height:48px}
+.scope{display:flex;gap:3px;background:var(--panel);border-radius:9px;padding:3px}
+.scope button,.back{color:var(--muted);padding:0 16px;height:42px;border-radius:7px;font-size:16px}
+.scope button[aria-pressed=true]{background:var(--fg);color:var(--bg)}
+.back{background:var(--panel);color:var(--fg)}
+.records{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:10px;height:230px}
+.record{text-align:left;background:var(--panel);border-radius:10px;padding:9px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:1px}
+.record .value{font-size:40px;font-weight:500;letter-spacing:-1.5px;line-height:1.05}
+.record .value .unit{font-size:18px}
+.record .label{font-size:14px;letter-spacing:1px}
+.record .stamp{display:flex;justify-content:space-between;gap:6px;font-size:14px;color:var(--muted)}
+.record .best{color:var(--lime)}
+.record.empty .value{color:var(--muted)}
+.strip{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;height:52px}
+.strip .kv{font-size:14px;color:var(--muted);letter-spacing:.5px}
+.strip .kv b{display:block;color:var(--fg);font-size:24px;font-weight:500;letter-spacing:-.5px;margin-bottom:2px}
+.journey{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 14px}
+.journey .label{font-size:14px;letter-spacing:1px}
+.journey .num-s{font-size:30px}
+.event-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+.event-title{font-size:30px;font-weight:500;letter-spacing:-1px;line-height:1.1}
+.event-plot{display:block;width:100%;height:210px}
+.event-plot text{fill:var(--muted);font-size:14px}
+.event-meta{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:8px;color:var(--muted);font-size:15px}
+.event-meta b{color:var(--fg);font-weight:500}
+/* Dynamics */
+.dyn{display:grid;grid-template-columns:330px 1fr;gap:16px;align-items:start}
+.dyn .gg{width:330px;height:330px;margin:-8px 0 0}
+.rows .row{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line);font-size:16px;color:var(--muted)}
+.rows .row b{font-size:28px;font-weight:500;color:var(--fg);letter-spacing:-1px}
+.rows .row.sub b{font-size:22px}
+.rows .row .pair{display:flex;gap:18px}
+.rows .row button{color:var(--lime);font-size:14px;letter-spacing:1px;border:1px solid var(--line);border-radius:6px;padding:4px 10px}
+/* Energy, Battery, Charge */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:6px}
+.stats .num-s{font-size:34px}
+.plot{display:block;width:100%;height:176px}
+.plot text{fill:var(--muted);font-size:14px}
+.plot .grid{stroke:var(--line);fill:none}
+.plot .signal{stroke:var(--lime);stroke-width:3;fill:none}
+.plot .signal.cyan{stroke:var(--cyan)}
+.plot .area{fill:var(--lime);opacity:.12}
+.plot .area.cyan{fill:var(--cyan)}
+.plot .gap{fill:var(--bg);opacity:.9}
+.footrow{display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-top:8px;border-top:1px solid var(--line);font-size:16px;color:var(--muted)}
+.footrow b{font-size:24px;font-weight:500;color:var(--fg);margin-left:8px;letter-spacing:-.5px}
+.nodata{position:absolute;inset:14px 20px 10px;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.nodata span{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 22px;font-size:20px;letter-spacing:2px;color:var(--muted)}
+/* Settings */
+.settings{display:grid;grid-template-columns:1fr 1fr;gap:0 28px}
+.settings .row{display:flex;justify-content:space-between;align-items:center;height:42px;border-bottom:1px solid var(--line);font-size:17px}
+.settings .row span:last-child{color:var(--muted);font-size:16px}
+.settings .row .seg{display:flex;gap:2px;background:var(--panel);border-radius:6px;padding:2px}
+.settings .row .seg i{font-style:normal;padding:2px 9px;border-radius:4px;font-size:14px;color:var(--muted)}
+.settings .row .seg i.on{background:var(--fg);color:var(--bg)}
+.settings .row .danger{color:var(--red)}
+/* Splash */
+.splash{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0}
+.splash .wings{display:block;width:420px;height:auto;margin-top:-6px}
+.splash .model{font-size:26px;letter-spacing:9px;margin-left:9px;color:var(--muted);margin-top:14px}
+.splash .rule{width:220px;height:4px;background:var(--lime);border-radius:2px;margin:22px 0 0}
+.splash .rings{position:absolute;right:-120px;top:-120px;width:520px;height:520px;opacity:.35}
+.splash .boot{position:absolute;left:20px;right:20px;bottom:18px;display:flex;justify-content:space-between;font-size:16px;color:var(--muted);letter-spacing:.5px}
+.splash .boot b{color:var(--fg);font-weight:500}
+</style>
+</head>
+<body>
+<div class="panel" id="panel"></div>
+<script>
+(() => {
+const q = new URLSearchParams(location.search);
+const screens = ['Drive','Trip','Dynamics','Energy','Battery'];
+const scopes = {trip:'This trip', today:'Today', all:'All time'};
+const scenes = {
+  Corner:     {speed:64, wheels:64.8, power:18.4,  x:.48, y:.12,  yaw:14.2},
+  Accelerate: {speed:48, wheels:49.1, power:83.2,  x:.02, y:.37,  yaw:0.8},
+  Regen:      {speed:52, wheels:52.6, power:-28.6, x:-.08, y:-.23, yaw:-2.1},
+  Still:      {speed:0,  wheels:0,    power:0.9,   x:0,   y:0,    yaw:0},
+};
+const S = {
+  screen: screens.includes(q.get('screen')) || ['Settings','Splash'].includes(q.get('screen')) ? q.get('screen') : 'Drive',
+  scene: scenes[q.get('scene')] ? q.get('scene') : 'Corner',
+  scope: scopes[q.get('scope')] ? q.get('scope') : 'trip',
+  view: q.get('view') === 'journey' ? 'journey' : 'records',
+  event: q.get('event') !== null && q.get('event') !== '' ? Number(q.get('event')) : null,
+  obd: q.get('obd') !== '0',
+  fix: q.get('fix') !== '0',
+  best: q.get('best') !== null ? Number(q.get('best')) % 6 : 0,
+  night: q.get('night') === '1',
+};
+
+// Records: 0-60, 0-100, 100-0 braking (time, distance), max lateral, peak draw, peak regen.
+const metricNames = ['Best 0–60 km/h','Best 0–100 km/h','Best 100–0 braking','Max lateral G','Peak battery draw','Peak battery regen'];
+const metricUnits = ['s','s','s','g','kW','kW'];
+const rec = {
+  trip:  {ctx:'24 Oct · 14:06–14:44', values:['3.8','7.4','2.9','0.68','141.2','44.8'], sub:['3 valid runs','2 valid runs','41 m','L 0.62 · R 0.68','1 s mean','1 s mean'],
+          times:['14:12','14:12','14:31','14:26','14:12','14:31'], compare:['−0.1 s vs last trip','+0.1 s vs last trip','−1.2 m vs last trip','+0.02 g vs last trip','+2.1 kW vs last trip','−1.4 kW vs last trip'],
+          bestFlags:[1,0,1,1,1,0], distance:'24.3', moving:'00:38', avg:'38.4', vmax:'103', energy:'3.60', recovered:'0.42', eff:'148', soc:'9', s60100:'3.6', brakeG:'0.72', accelG:'0.41', alt:'48'},
+  today: {ctx:'24 Oct · 2 sessions', values:['3.8','7.3','2.9','0.68','141.2','46.2'], sub:['5 valid runs','4 valid runs','41 m','L 0.62 · R 0.68','1 s mean','1 s mean'],
+          times:['14:12','09:18','14:31','14:26','14:12','09:27'], compare:['−0.1 s vs yesterday','−0.1 s vs yesterday','−0.8 m vs yesterday','+0.02 g vs yesterday','+2.1 kW vs yesterday','+0.6 kW vs yesterday'],
+          bestFlags:[1,1,1,1,1,1], distance:'51.6', moving:'01:19', avg:'39.2', vmax:'103', energy:'7.48', recovered:'1.05', eff:'145', soc:'19', s60100:'3.6', brakeG:'0.76', accelG:'0.41', alt:'48'},
+  all:   {ctx:'Lifetime records · since 12 Oct 2026', values:['3.8','7.3','2.8','0.81','145.6','48.1'], sub:['42 valid runs','31 valid runs','39 m','L 0.79 · R 0.81','1 s mean','1 s mean'],
+          times:['24 Oct','24 Oct','18 Oct','12 Oct','18 Oct','18 Oct'], compare:['Previous 3.9 s','Previous 7.4 s','Previous 2.9 s','Previous 0.78 g','Previous 143.9 kW','Previous 47.6 kW'],
+          bestFlags:[1,1,0,0,0,0], distance:'1248', moving:'31:42', avg:'39.4', vmax:'118', energy:'183.5', recovered:'24.7', eff:'147', soc:'—', s60100:'3.5', brakeG:'0.89', accelG:'0.47', alt:'—'},
+};
+const bestChoices = [['Lateral best','0.68 g'],['Peak regen','44.8 kW'],['Best 0–60','3.8 s'],['Best 0–100','7.4 s'],['Best 100–0','2.9 s'],['Peak draw','141.2 kW']];
+
+const panel = document.getElementById('panel');
+const sc = () => scenes[S.scene];
+
+function header(){
+  const gps = S.fix ? `<span>GPS <b>9</b></span>` : `<span class="warn">GPS acquiring</span>`;
+  const obd = S.obd ? `<span class="pill ok">OBD LINK</span>` : `<span class="pill">OBD SCAN</span>`;
+  return `<div class="top" id="hdr" role="button" aria-label="Open settings">
+    <span class="brand">MINI<small>COOPER SE</small></span>
+    <div class="status">${gps}${obd}<span>${S.night?'☾ night':'☼ day'}</span><span class="clock">15:59</span></div></div>`;
+}
+function nav(active){
+  return `<nav>${screens.map(n=>`<button data-screen="${n}" aria-pressed="${n===active}">${n.toUpperCase()}</button>`).join('')}</nav>`;
+}
+
+function gg(size){
+  const s = sc(); const c = 150, R = 112;
+  let cloud='', trail='';
+  for(let i=0;i<220;i++){ const a=i*2.39996, r=Math.sqrt((i%43)/43); const x=Math.cos(a)*r*.68, y=Math.sin(a)*r*(Math.sin(a)>0?.4:.6);
+    cloud += `<circle cx="${c+x*R}" cy="${c-y*R}" r="1.6" fill="var(--cloud)" opacity=".45"/>`; }
+  for(let i=0;i<32;i++){ const t=i/31, x=s.x*t+.055*Math.sin(t*5), y=s.y*t-.07*Math.sin(t*6); trail += `${i?'L':'M'}${c+x*R},${c-y*R} `; }
+  const peaks = [[-.62,0],[.68,0],[0,.41],[0,-.72]].map(p=>`<circle class="peak" cx="${c+p[0]*R}" cy="${c-p[1]*R}" r="4"/>`).join('');
+  return `<svg class="gg" viewBox="0 0 300 300" role="img" aria-label="G plot">
+    <circle class="grid" cx="${c}" cy="${c}" r="${R}"/><circle class="grid" cx="${c}" cy="${c}" r="${R/2}"/>
+    <path class="grid" d="M${c-R} ${c}H${c+R}M${c} ${c-R}V${c+R}"/>
+    <text x="${c}" y="22" text-anchor="middle">ACCEL</text><text x="${c}" y="290" text-anchor="middle">BRAKE</text>
+    <text x="22" y="155">L</text><text x="270" y="155">R</text>
+    <text x="78" y="214">0.5g</text><text x="42" y="248">1g</text>
+    ${cloud}${peaks}<path class="trace" d="${trail}"/>
+    <line x1="${c}" y1="${c}" x2="${c+s.x*R}" y2="${c-s.y*R}" stroke="var(--lime)" opacity=".4"/>
+    <circle class="dot" cx="${c+s.x*R}" cy="${c-s.y*R}" r="15" opacity=".13"/><circle class="dot" cx="${c+s.x*R}" cy="${c-s.y*R}" r="5.5"/></svg>`;
+}
+
+function powerBar(p){
+  // Scale: -60 kW regen at the left edge, +150 kW draw at the right edge, zero at 28.5 percent.
+  const zero=28.5, left=p<0?zero+p/60*zero:zero, width=p<0?-p/60*zero:p/150*(100-zero);
+  return `<div class="pbar"><span class="fill ${p<0?'regen':'draw'}" style="left:${left}%;width:${width}%"></span><span class="zero"></span></div>
+    <div class="pbar-scale"><span>60 regen</span><span>0</span><span>150 kW</span></div>`;
+}
+
+function drive(){
+  const s=sc(), p=s.power, g=Math.hypot(s.x,s.y).toFixed(2);
+  const speed = S.obd ? Math.round(s.wheels) : s.speed;
+  const src = S.obd ? `<span class="src live">wheels</span>` : `<span class="src">gps</span>`;
+  const speedCls = (!S.fix && !S.obd) ? 'stale' : '';
+  const choice = bestChoices[S.best];
+  return `<div class="content"><div class="drive">
+    <div class="col"><div class="label">Speed${src}</div><div class="num-xl ${speedCls}">${(!S.fix&&!S.obd)?'—':speed}</div><div class="small">km/h${S.obd?` · GPS ${s.speed}`:''} · 248° WSW</div>
+      <div class="block"><div class="label">Battery power</div><div class="num-s ${S.obd?'':'stale'}">${S.obd?(p>0?'+':'')+p.toFixed(1):'—'} <span class="unit">kW</span></div>${powerBar(S.obd?p:0)}<div class="small">${S.obd?(p<0?'Recovering':'Drawing'):'No car data'}</div></div></div>
+    <div>${gg()}</div>
+    <div class="col right"><div class="label">State of charge</div><div class="num-l ${S.obd?'':'stale'}">${S.obd?'68':'—'}<span class="unit" style="font-size:28px">%</span></div>
+      <div class="track"><span class="win" style="left:6%;width:88%"></span><span class="fill" style="left:6%;width:${S.obd?60:0}%"></span></div><div class="small">Displayed SOC</div>
+      <div class="block"><div class="label">Range · car</div><div class="num-s ${S.obd?'':'stale'}">${S.obd?'142':'—'} <span class="unit">km</span></div><div class="small">Pack 27 °C avg · 12.8 V</div></div></div>
+  </div>
+  <div class="foot"><span class="kv">Combined G<b>${g} g</b></span><span class="kv">Trip<b>148 Wh/km</b></span>
+    <button class="kv" data-best-next="1" aria-label="Change displayed trip best">${choice[0]}<b>${choice[1]}</b><span class="cyc">↻</span></button></div></div>`;
+}
+
+function trip(){
+  const r = rec[S.scope];
+  const top = `<div class="trip-top"><div><div class="label">${S.event!==null?'Record':'Trip records'}</div><div class="small">${r.ctx}</div></div>
+    <div class="scope">${Object.entries(scopes).map(([k,v])=>`<button data-scope="${k}" aria-pressed="${k===S.scope}">${v}</button>`).join('')}</div></div>`;
+  if (S.event !== null) return eventPage(r);
+  if (S.view === 'journey') {
+    const cells = [['Distance',r.distance,'km'],['Moving time',r.moving,'h:mm'],['Avg moving speed',r.avg,'km/h'],['Max speed',r.vmax,'km/h'],
+      ['Net energy',r.energy,'kWh'],['Recovered',r.recovered,'kWh'],['Efficiency',r.eff,'Wh/km'],['SOC used',r.soc,'%'],
+      ['Best 60–100',r.s60100,'s'],['Max braking G',r.brakeG,'g'],['Peak accel G',r.accelG,'g'],['Altitude',r.alt,'m']];
+    return `<div class="content">${top}<div class="journey">${cells.map(c=>`<div><div class="label">${c[0]}</div><div class="num-s">${c[1]} <span class="unit">${c[2]}</span></div></div>`).join('')}</div>
+      <div class="strip"><span class="small">Moving time excludes stops · 60–100 is a rolling run, counted on its own</span><button class="back" data-view="records">← Records</button></div></div>`;
+  }
+  const tiles = r.values.map((v,i)=>{
+    const empty = v==='—';
+    return `<button class="record ${empty?'empty':''}" data-event="${i}" aria-label="Inspect ${metricNames[i]}">
+      <span class="label">${metricNames[i]}</span>
+      <span class="value">${v} <span class="unit">${empty?'':metricUnits[i]}</span></span>
+      <span class="stamp"><span>${empty?'No valid run yet':r.sub[i]+' · '+r.times[i]}</span></span><span class="stamp"><span class="${r.bestFlags[i]?'best':''}">${empty?'':r.compare[i]}</span></span></button>`;}).join('');
+  return `<div class="content">${top}<div class="records">${tiles}</div>
+    <div class="strip"><span class="kv"><b>${r.distance} km</b>distance</span><span class="kv"><b>${r.eff} Wh/km</b>efficiency</span><span class="kv"><b>${r.recovered} kWh</b>recovered</span><span class="kv"><b>${r.soc}${r.soc==='—'?'':' %'}</b>SOC used</span>
+      <button class="back" data-view="journey">Journey totals →</button></div></div>`;
+}
+
+function eventPage(r){
+  const i=S.event, dur = i<3 ? Number(r.values[i]) : 8;
+  const series = [
+    {label:'Speed', unit:'km/h', max:120, color:'var(--fg)', f:t=> i===0?60*Math.pow(t,.85): i===1?100*Math.pow(t,.85): i===2?100*(1-t): 64+10*Math.sin(t*3)},
+    {label:i===3?'Lateral':'Longitudinal', unit:'g', max:1, color:'var(--cyan)', f:t=> i===3?Number(r.values[3])*Math.sin(Math.PI*t): i===2?-Number(r.brakeG)*Math.sin(Math.PI*t): i===5?-.25*Math.sin(Math.PI*t): .4*Math.sin(Math.PI*t)},
+    {label:'Battery', unit:'kW', max:160, color:'var(--lime)', f:t=> (i===5?-Number(r.values[5]): i===2?-38: i===4?Number(r.values[4]): 110)*Math.sin(Math.PI*t)},
+  ];
+  const plots = series.map((s,k)=>{ const base=44+k*62, amp=26; let d='';
+    for(let n=0;n<=40;n++){ const t=n/40; d+=`${n?'L':'M'}${170+t*560},${base-s.f(t)/s.max*amp} `; }
+    return `<text x="0" y="${base-14}">${s.label} · ${s.unit}</text><text x="0" y="${base+6}">+${s.max} / 0 / −${s.max}</text><path class="grid" d="M170 ${base}H730"/><path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.5"/>`; }).join('');
+  const meta = i<2 ? `<span>Stationary start · no rollout</span><span>${r.sub[i]}</span><span>GPS 10 Hz · 9 sats · ±0.05 s</span>`
+    : i===2 ? `<span>Armed above 100 km/h</span><span>Distance <b>${r.sub[2]}</b></span><span>Combined peak <b>0.79 g</b></span>`
+    : i===3 ? `<span>Filtered IMU peak (5 Hz)</span><span>${r.sub[3]}</span>`
+    : `<span>1 s mean</span><span>Instantaneous max <b>${i===4?'147.3':'49.2'} kW</b></span>`;
+  return `<div class="content"><div class="event-head"><div><div class="label">${scopes[S.scope]} · ${r.times[i]}</div>
+      <div class="event-title">${metricNames[i]} &nbsp; ${r.values[i]} <span class="unit">${metricUnits[i]}</span></div></div><button class="back" data-event-back="1">← Records</button></div>
+    <svg class="event-plot" viewBox="0 0 740 210">${plots}<text x="170" y="206">0 s</text><text x="730" y="206" text-anchor="end">${dur.toFixed(1)} s</text></svg>
+    <div class="event-meta"><span>SOC <b>71 %</b></span><span>Pack <b>27 °C</b></span>${meta}<span>${r.compare[i]}</span></div></div>`;
+}
+
+function dynamics(){
+  const s=sc(), g=Math.hypot(s.x,s.y).toFixed(2);
+  const o = S.obd ? '' : 'stale';
+  return `<div class="content"><div class="dyn">${gg()}<div class="rows">
+    <div class="row"><span>Lateral</span><b>${s.x>=0?'+':''}${s.x.toFixed(2)} g</b></div>
+    <div class="row"><span>Longitudinal</span><b>${s.y>=0?'+':''}${s.y.toFixed(2)} g</b></div>
+    <div class="row"><span>Combined</span><b>${g} g</b></div>
+    <div class="row"><span>Yaw rate</span><b>${s.yaw>=0?'+':''}${s.yaw.toFixed(1)} °/s</b></div>
+    <div class="row sub"><span>Peaks L·R·acc·brk</span><span class="pair"><b>0.62</b><b>0.68</b><b>0.41</b><b>0.72</b><button data-reset="1">RESET</button></span></div>
+    <div class="row sub ${o}"><span>Torque actual / requested</span><span class="pair"><b>${S.obd?'182':'—'}</b><b>${S.obd?'186 Nm':'—'}</b></span></div>
+    <div class="row sub ${o}"><span>Pedal · motor temps</span><span class="pair"><b>${S.obd?'42 %':'—'}</b><b>${S.obd?'48 / 46 °C':'—'}</b></span></div>
+  </div></div></div>`;
+}
+
+function chart(kind){
+  const energy = kind==='energy', charge = kind==='charge';
+  let pts=[], gaps='';
+  for(let i=0;i<=60;i++){
+    let y;
+    if (energy) { const kw = 35*Math.sin(i*.23)+15*Math.cos(i*.8)+12; y = 92 - kw/150*70; }          // signed kW, zero line at 92
+    else if (charge) { y = i<15 ? 48+i*.3 : 52+Math.pow((i-15)/45,1.6)*88; }
+    else { y = 96+10*Math.sin(i*.18); }
+    pts.push(`${80+i*10.6},${y.toFixed(1)}`);
+  }
+  if (charge) gaps = `<rect class="gap" x="${80+28*10.6}" y="18" width="${6*10.6}" height="128"/><text x="${80+31*10.6}" y="80" text-anchor="middle">car asleep</text>`;
+  const yl = energy ? [['+100',45],['0',92],['−50',139]] : charge ? [['50',48],['25',96],['0',146]] : [['30',40],['25',96],['20',146]];
+  const area = energy ? `<path class="area" d="M80 92L${pts.join('L')}L${80+60*10.6} 92Z"/>` : `<path class="area" d="M80 146L${pts.join('L')}L${80+60*10.6} 146Z"/>`;
+  return `<svg class="plot" viewBox="0 0 740 176" role="img"><path class="grid" d="M80 18V146H716"/>${yl.map(l=>`<path class="grid" d="M80 ${l[1]}H716" ${l[0]==='0'||l[0]==='25'?'':'stroke-dasharray="3 5"'}/><text x="68" y="${l[1]+5}" text-anchor="end">${l[0]}</text>`).join('')}
+    <text x="10" y="24">${energy?'kW':charge?'kW':'°C'}</text>${(S.obd||charge)?area+`<path class="signal" d="M${pts.join('L')}"/>`:''}${gaps}
+    <text x="80" y="170">${charge?'10 %':'−10 min'}</text><text x="716" y="170" text-anchor="end">${charge?'SOC 100 %':'now'}</text></svg>`;
+}
+
+function energy(){
+  const o = S.obd?'':'stale';
+  return `<div class="content"><div class="stats">
+    <div><div class="label">Trip average</div><div class="num-s ${o}">${S.obd?'148':'—'} <span class="unit">Wh/km</span></div></div>
+    <div><div class="label">Net energy</div><div class="num-s ${o}">${S.obd?'3.60':'—'} <span class="unit">kWh</span></div></div>
+    <div><div class="label">Recovered</div><div class="num-s ${o}">${S.obd?'0.42':'—'} <span class="unit">kWh</span></div></div>
+    <div><div class="label">SOC used</div><div class="num-s ${o}">${S.obd?'9':'—'} <span class="unit">%</span></div></div></div>
+    ${chart('energy')}<div class="small">Battery power, last 10 min · above the line draws, below recovers · Wh/km shown only above 15 km/h</div>
+    ${S.obd?'':'<div class="nodata"><span>NO CAR DATA</span></div>'}</div>`;
+}
+function battery(){
+  const o = S.obd?'':'stale';
+  return `<div class="content"><div class="stats">
+    <div><div class="label">Pack voltage</div><div class="num-s ${o}">${S.obd?'361.2':'—'} <span class="unit">V</span></div></div>
+    <div><div class="label">Current</div><div class="num-s ${o}">${S.obd?'+51':'—'} <span class="unit">A</span></div></div>
+    <div><div class="label">Pack temp</div><div class="num-s ${o}">${S.obd?'26·27·28':'—'} <span class="unit">°C</span></div></div>
+    <div><div class="label">Cell spread</div><div class="num-s ${o}">${S.obd?'12':'—'} <span class="unit">mV</span></div></div></div>
+    ${chart('thermal')}<div class="footrow"><span>Cells avg / min / max<b>${S.obd?'3.76 · 3.75 · 3.77 V':'—'}</b></span><span>12 V<b>${S.obd?'12.8 V':'—'}</b></span><span>BMS health<b>${S.obd?'94 %':'—'}</b></span></div>
+    ${S.obd?'':'<div class="nodata"><span>NO CAR DATA</span></div>'}</div>`;
+}
+function settings(){
+  const row=(a,b)=>`<div class="row"><span>${a}</span><span>${b}</span></div>`;
+  const seg=(opts,on)=>`<span class="seg">${opts.map(o=>`<i class="${o===on?'on':''}">${o}</i>`).join('')}</span>`;
+  return `<div class="content"><div class="settings"><div>
+    ${row('IMU mounting calibration','Last 24 Oct · <span style="color:var(--lime)">Run</span>')}
+    ${row('Units',seg(['km/h','mph'],'km/h'))}
+    ${row('Night mode',seg(['Auto','On','Off'],'Auto'))}
+    ${row('Brightness','Auto · 100 %')}
+    ${row('OBD',seg(['On','Off'],'On'))}
+    ${row('Dongle','vLinker BM+ · <span style="color:var(--lime)">Forget</span>')}
+    ${row('Start screen',seg(['Drive','Last'],'Drive'))}
+  </div><div>
+    ${row('Trip','Reset this trip')}
+    ${row('All-time records','<span class="danger">Clear</span>')}
+    ${row('Timezone','Australia/Melbourne')}
+    ${row('Diagnostics','GPS 10 Hz · IMU 213 Hz · OBD 5 Hz')}
+    ${row('Demo mode',seg(['Off','Replay'],'Off'))}
+    ${row('WiFi update','Off · 10 min timeout')}
+    ${row('About','Mini Dash 0.3b · tap for licences')}
+  </div></div></div>`;
+}
+function splash(){
+  return `<div class="splash"><svg class="rings" viewBox="0 0 300 300"><circle cx="150" cy="150" r="112" fill="none" stroke="var(--line)" stroke-width="1.2"/><circle cx="150" cy="150" r="56" fill="none" stroke="var(--line)" stroke-width="1.2"/><path d="M38 150H262M150 38V262" stroke="var(--line)" stroke-width="1.2"/><circle cx="204" cy="137" r="6" fill="var(--lime)"/><path d="M150 150 C 170 148, 190 140, 204 137" stroke="var(--lime)" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>
+    <img class="wings" src="assets/mini-wings.png" width="420" alt="MINI"><div class="model">COOPER SE</div><div class="rule"></div>
+    <div class="boot"><span>GPS <b>acquiring</b> · 3 sats</span><span>OBD <b>connecting</b></span><span>IMU <b>ready</b></span><span>24 Oct · 15:59</span></div></div>`;
+}
+
+function render(){
+  if (S.screen === 'Splash') { panel.innerHTML = splash(); return; }
+  if (S.screen === 'Settings') { panel.innerHTML = header().replace('aria-label="Open settings"','aria-label="Back"').replace('<div class="status">','<div class="status"><button class="back" data-back-settings="1" style="height:34px;font-size:15px">← Back</button>') + settings() + nav(''); return; }
+  const body = {Drive:drive, Trip:trip, Dynamics:dynamics, Energy:energy, Battery:battery}[S.screen]();
+  panel.innerHTML = header() + body + nav(S.screen);
+}
+panel.addEventListener('click', e => {
+  const b = e.target.closest('button,[role=button]'); if (!b) return;
+  if (b.id === 'hdr' && S.screen !== 'Settings') { S.screen = 'Settings'; }
+  if (b.dataset.backSettings) S.screen = 'Drive';
+  if (b.dataset.screen) { S.screen = b.dataset.screen; S.event = null; }
+  if (b.dataset.scope) { S.scope = b.dataset.scope; S.event = null; }
+  if (b.dataset.view) S.view = b.dataset.view;
+  if (b.dataset.event !== undefined) S.event = Number(b.dataset.event);
+  if (b.dataset.eventBack) S.event = null;
+  if (b.dataset.bestNext) S.best = (S.best + 1) % bestChoices.length;
+  render();
+});
+// Swipe left/right between tabs, as CLAUDE.md asks, in addition to the tab bar.
+let x0 = null;
+panel.addEventListener('pointerdown', e => x0 = e.clientX);
+panel.addEventListener('pointerup', e => { if (x0 === null) return; const dx = e.clientX - x0; x0 = null;
+  if (Math.abs(dx) < 80 || !screens.includes(S.screen)) return;
+  const i = screens.indexOf(S.screen); S.screen = screens[(i + (dx < 0 ? 1 : screens.length - 1)) % screens.length]; S.event = null; render(); });
+render();
+})();
+</script>
+</body>
+</html>

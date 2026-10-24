@@ -1,0 +1,156 @@
+<div id="mini-telemetry" aria-label="MINI telemetry screen concept">
+<style>
+#mini-telemetry { --se-bg:light-dark(#f0f2ed,#0b1114); --se-panel:light-dark(#e4e9e3,#121c21); --se-fg:light-dark(#142228,#edf4ee); --se-muted:light-dark(#52636a,#99acb4); --se-line:light-dark(#bdcac6,#2b3a42); --se-lime:light-dark(#3e7000,#c7f46b); --se-cyan:light-dark(#00767b,#64d9e0); font-family:Arial,sans-serif; color:var(--se-fg); }
+#mini-telemetry * { box-sizing:border-box; }
+#mini-telemetry .instrument { max-width:800px; margin:auto; background:var(--se-bg); min-height:480px; border-radius:18px; overflow:hidden; box-shadow:0 18px 48px #0002; }
+#mini-telemetry .top { height:50px; display:flex; align-items:center; gap:18px; padding:0 24px; border-bottom:1px solid var(--se-line); font-size:12px; letter-spacing:1.5px; }
+#mini-telemetry .brand { font-size:16px; font-weight:700; letter-spacing:3px; }
+#mini-telemetry .tag { color:var(--se-lime); }
+#mini-telemetry .demo { margin-left:auto; color:var(--se-muted); margin-right:65px; font-size:11px; letter-spacing:1px; }
+#mini-telemetry .content { min-height:366px; padding:20px 24px 14px; }
+#mini-telemetry .overview { display:grid; grid-template-columns:1fr 1.65fr 1fr; gap:20px; align-items:center; }
+#mini-telemetry .label { color:var(--se-muted); font-size:12px; letter-spacing:1.5px; text-transform:uppercase; }
+#mini-telemetry .number { font-size:66px; font-weight:500; letter-spacing:-4px; line-height:1.12; font-variant-numeric:tabular-nums; }
+#mini-telemetry .unit { font-size:15px; color:var(--se-muted); letter-spacing:0; }
+#mini-telemetry .reading { font-size:31px; letter-spacing:-1px; margin-top:6px; font-variant-numeric:tabular-nums; }
+#mini-telemetry .small { font-size:13px; color:var(--se-muted); line-height:1.5; }
+#mini-telemetry .block { margin:24px 0 0; }
+#mini-telemetry .track { height:6px; background:var(--se-line); border-radius:4px; margin:10px 0; overflow:hidden; }
+#mini-telemetry .track span { display:block; height:100%; background:var(--se-lime); }
+#mini-telemetry .gg { width:100%; height:270px; display:block; overflow:visible; }
+#mini-telemetry .gg text { fill:var(--se-muted); font-size:12px; letter-spacing:1px; }
+#mini-telemetry .grid { stroke:var(--se-line); fill:none; }
+#mini-telemetry .gg .trace { stroke:var(--se-lime); fill:none; stroke-width:2; stroke-linecap:round; }
+#mini-telemetry .gg .dot { fill:var(--se-lime); }
+#mini-telemetry .footread { display:flex; justify-content:space-between; padding-top:13px; margin-top:14px; border-top:1px solid var(--se-line); font-size:13px; gap:10px; }
+#mini-telemetry .footread strong { font-weight:500; color:var(--se-fg); font-size:19px; }
+#mini-telemetry .powerbar { display:flex; gap:3px; height:8px; margin:14px 0 8px; }
+#mini-telemetry .powerbar span { background:var(--se-line); flex:1; }
+#mini-telemetry .powerbar span.on { background:var(--se-lime); }
+#mini-telemetry .powerbar span.regen { background:var(--se-cyan); }
+#mini-telemetry nav { display:grid; grid-template-columns:repeat(6,1fr); height:64px; border-top:1px solid var(--se-line); }
+#mini-telemetry button { font:inherit; }
+#mini-telemetry nav button { border:0; border-top:3px solid transparent; color:var(--se-muted); background:transparent; font-size:13px; letter-spacing:1px; }
+#mini-telemetry nav button[aria-pressed=true] { border-top-color:var(--se-lime); color:var(--se-fg); background:var(--se-panel); }
+#mini-telemetry .wide { display:grid; grid-template-columns:1.15fr 1fr; gap:28px; align-items:center; }
+#mini-telemetry .wide .gg { max-width:320px; height:300px; margin:auto; }
+#mini-telemetry .headline { font-size:25px; letter-spacing:-.7px; margin:4px 0 18px; font-weight:500; }
+#mini-telemetry .row { display:flex; justify-content:space-between; align-items:center; padding:13px 0; border-bottom:1px solid var(--se-line); gap:8px; font-size:14px; }
+#mini-telemetry .row b { font-size:22px; font-weight:500; font-variant-numeric:tabular-nums; }
+#mini-telemetry .plot { width:100%; height:150px; display:block; }
+#mini-telemetry .plot text { fill:var(--se-muted); font-size:13px; }
+#mini-telemetry .plot .signal { stroke:var(--se-lime); stroke-width:3; fill:none; }
+#mini-telemetry .plot .area { fill:var(--se-lime); opacity:.1; }
+#mini-telemetry .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; }
+#mini-telemetry .thermal { display:flex; align-items:end; gap:6px; height:170px; padding:22px 0; }
+#mini-telemetry .thermal span { flex:1; background:var(--se-cyan); border-radius:4px 4px 0 0; }
+#mini-telemetry .preview-controls { max-width:800px; margin:14px auto 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--se-muted); font-size:12px; }
+#mini-telemetry .preview-controls button { background:var(--se-panel); color:var(--se-fg); border:1px solid var(--se-line); border-radius:20px; padding:9px 15px; min-height:44px; }
+#mini-telemetry .preview-controls button[aria-pressed=true] { border-color:var(--se-lime); }
+#mini-telemetry .detail { color:var(--se-muted); font-size:12px; margin-top:10px; }
+#mini-telemetry .trip-top { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; }
+#mini-telemetry .scope { display:flex; gap:3px; background:var(--se-panel); border-radius:9px; padding:3px; }
+#mini-telemetry .scope button, #mini-telemetry .back { border:0; background:transparent; color:var(--se-muted); padding:10px 14px; border-radius:6px; min-height:44px; font-size:13px; }
+#mini-telemetry .scope button[aria-pressed=true] { background:var(--se-fg); color:var(--se-bg); }
+#mini-telemetry .records { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+#mini-telemetry .record { text-align:left; border:0; background:var(--se-panel); color:var(--se-fg); padding:12px 15px; border-radius:10px; min-height:100px; }
+#mini-telemetry .record:hover { box-shadow:inset 0 0 0 1px var(--se-lime); }
+#mini-telemetry .record .value { display:block; font-size:35px; font-weight:500; letter-spacing:-1px; margin:3px 0; font-variant-numeric:tabular-nums; }
+#mini-telemetry .record .label { font-size:11px; letter-spacing:.8px; }
+#mini-telemetry .record .stamp { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px; font-size:11px; color:var(--se-muted); }
+#mini-telemetry .record .best { color:var(--se-lime); }
+#mini-telemetry .trip-strip { display:flex; justify-content:space-between; gap:12px; margin-top:12px; align-items:center; font-size:12px; color:var(--se-muted); }
+#mini-telemetry .trip-strip b { color:var(--se-fg); font-size:17px; font-weight:500; display:block; margin-bottom:3px; }
+#mini-telemetry .back { background:var(--se-panel); color:var(--se-fg); }
+#mini-telemetry .best-switch { display:flex; align-items:center; gap:8px; background:transparent; border:0; color:var(--se-muted); padding:0; min-height:36px; font-size:12px; }
+#mini-telemetry .best-switch strong { color:var(--se-lime); }
+#mini-telemetry .event-title { font-size:23px; margin:0; font-weight:500; }
+#mini-telemetry .event-plot { display:block; width:100%; height:180px; }
+#mini-telemetry .event-plot text { fill:var(--se-muted); font-size:12px; }
+#mini-telemetry .event-meta { display:flex; flex-wrap:wrap; gap:9px 24px; margin-top:12px; color:var(--se-muted); font-size:12px; }
+#mini-telemetry .journey-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+#mini-telemetry .journey-grid .reading { margin-bottom:12px; }
+@media(max-width:600px) { #mini-telemetry .records { grid-template-columns:repeat(2,minmax(0,1fr)); } #mini-telemetry .trip-top { flex-wrap:wrap; } #mini-telemetry .trip-strip { flex-wrap:wrap; } #mini-telemetry .journey-grid { grid-template-columns:repeat(2,1fr); } #mini-telemetry .event-plot { height:190px; } #mini-telemetry nav { grid-template-columns:repeat(3,1fr); height:112px; } }
+@media(max-width:600px) { #mini-telemetry .overview { grid-template-columns:1fr 1fr; gap:16px; } #mini-telemetry .overview .gpanel { grid-column:1/-1; grid-row:2; max-width:290px; margin:auto; } #mini-telemetry .number { font-size:54px; } #mini-telemetry .wide { grid-template-columns:1fr; } #mini-telemetry .top { padding:0 16px; gap:8px; } #mini-telemetry .demo { margin-right:0; font-size:11px; } #mini-telemetry .top .tag { display:none; } #mini-telemetry .content { padding:20px 16px; } #mini-telemetry nav button { font-size:11px; letter-spacing:0; } #mini-telemetry .stats { gap:12px; } #mini-telemetry .reading { font-size:26px; } #mini-telemetry .footread { flex-wrap:wrap; } }
+</style>
+<div class="instrument">
+ <div class="top"><span class="brand">MINI / SE</span><span class="tag">TELEMETRY</span><span class="demo">CONCEPT · DEMO DATA</span></div>
+ <div class="content" id="se-content" role="region" aria-label="Selected telemetry screen"></div>
+ <nav aria-label="Telemetry screens"><button type="button" class="cursor-interaction" data-screen="Drive" aria-pressed="true">DRIVE</button><button type="button" class="cursor-interaction" data-screen="Dynamics" aria-pressed="false">DYNAMICS</button><button type="button" class="cursor-interaction" data-screen="Energy" aria-pressed="false">ENERGY</button><button type="button" class="cursor-interaction" data-screen="Battery" aria-pressed="false">BATTERY</button><button type="button" class="cursor-interaction" data-screen="Charge" aria-pressed="false">CHARGE</button></nav>
+</div>
+<div class="preview-controls" aria-label="Preview scenarios"><span>Example driving state</span><button type="button" class="cursor-interaction" data-scene="Corner" aria-pressed="true">Corner</button><button type="button" class="cursor-interaction" data-scene="Accelerate" aria-pressed="false">Accelerate</button><button type="button" class="cursor-interaction" data-scene="Regen" aria-pressed="false">Regen</button><span id="se-announcement" aria-live="polite"></span></div>
+<script>
+(() => {
+const root=document.getElementById('mini-telemetry');
+const view=root.querySelector('#se-content');
+const scenes={Corner:{speed:64,power:18.4,x:.48,y:.12},Accelerate:{speed:48,power:83.2,x:.02,y:.37},Regen:{speed:52,power:-28.6,x:-.08,y:-.23}};
+let screen='Trip',scene='Corner',scope='This trip',event=null,tripView='records',bestIndex=0;
+const screens=['Drive','Trip','Dynamics','Energy','Battery','Charge'];
+const scopes=['This trip','Today','All time'];
+const metricNames=['0–60 km/h','0–100 km/h','Max lateral G','Max braking G','Peak battery draw','Peak battery regen'];
+const metricUnits=['s','s','g','g','kW','kW'];
+const records={
+ 'This trip':{values:['3.8','7.4','0.68','0.72','141.2','44.8'],times:['14:12','14:12','14:26','14:31','14:12','14:31'],compare:['−0.1 s vs last trip','+0.1 s vs last trip','+0.02 g vs last trip','−0.04 g vs last trip','+2.1 kW vs last trip','−1.4 kW vs last trip'],distance:'24.3',duration:'00:38',average:'38.4',energy:'3.60',recovered:'0.42',eff:'148',runs:'3'},
+ 'Today':{values:['3.8','7.3','0.68','0.76','141.2','46.2'],times:['14:12','09:18','14:26','09:27','14:12','09:27'],compare:['−0.1 s vs prior','−0.1 s vs prior','+0.02 g vs prior','+0.03 g vs prior','+2.1 kW vs prior','+0.6 kW vs prior'],distance:'51.6',duration:'01:19',average:'39.2',energy:'7.48',recovered:'1.05',eff:'145',runs:'5'},
+ 'All time':{values:['3.8','7.3','0.81','0.89','145.6','48.1'],times:['24 Oct','24 Oct','12 Oct','12 Oct','18 Oct','18 Oct'],compare:['Previous 3.9 s','Previous 7.4 s','Previous 0.78 g','Previous 0.85 g','Previous 143.9 kW','Previous 47.6 kW'],distance:'1248',duration:'31:42',average:'39.4',energy:'183.5',recovered:'24.7',eff:'147',runs:'42'}
+};
+const nav=root.querySelector('nav');
+nav.innerHTML=screens.map(name=>`<button type="button" class="cursor-interaction" data-screen="${name}" aria-pressed="${name===screen}">${name.toUpperCase()}</button>`).join('');
+const prefs={trail:true};
+const restored=window.openai?.widgetState?.modelContent;
+if(restored && scenes[restored.scene]) scene=restored.scene;
+if(restored?.version===2 && screens.includes(restored.screen)) screen=restored.screen;
+if(scopes.includes(restored?.scope))scope=restored.scope;
+function tripScreen(){
+ const r=records[scope];
+ const top=`<div class="trip-top"><div><div class="label">Session highlights</div><div class="small">${scope==='This trip'?'24 Oct · 14:06–14:44':scope==='Today'?'24 Oct · 2 sessions':'Lifetime records · October 2026'}</div></div><div class="scope" aria-label="Record period">${scopes.map(x=>`<button type="button" class="cursor-interaction" data-scope="${x}" aria-pressed="${x===scope}">${x}</button>`).join('')}</div></div>`;
+ if(event!==null)return eventScreen(r);
+ if(tripView==='journey')return top+`<div class="journey-grid">${[['Distance',r.distance,'km'],['Driving time',r.duration,'h:mm'],['Average speed',r.average,'km/h'],['Net energy',r.energy,'kWh'],['Recovered',r.recovered,'kWh'],['Efficiency',r.eff,'Wh/km'],['Valid 0–60 runs',r.runs,'runs'],['Best 60–100','3.6','s']].map(a=>`<div><div class="label">${a[0]}</div><div class="reading">${a[1]} <span class="unit">${a[2]}</span></div></div>`).join('')}</div><div class="trip-strip"><span>Driving time excludes parked periods</span><button class="back cursor-interaction" type="button" data-trip-view="records">Back to records</button></div>`;
+ return top+`<div class="records">${r.values.map((v,i)=>`<button type="button" class="record cursor-interaction" data-event="${i}" aria-label="Inspect ${metricNames[i]} record"><span class="label">${metricNames[i]}</span><span class="value">${v} <span class="unit">${metricUnits[i]}</span></span><span class="stamp"><span>${r.times[i]}</span><span class="${(i===0||i===2||i===4)&&scope==='This trip'?'best':''}">${r.compare[i]}</span></span></button>`).join('')}</div><div class="trip-strip"><span><b>${r.distance} km</b>distance</span><span><b>${r.eff} Wh/km</b>efficiency</span><span><b>${r.recovered} kWh</b>recovered</span><button type="button" class="back cursor-interaction" data-trip-view="journey">Journey totals →</button></div>`;
+}
+function eventScreen(r){
+ const i=event, duration=i===0?Number(r.values[0]):i===1?Number(r.values[1]):8;
+ const target=i===0?60:i===1?100:64;
+ const series=[{label:'Speed · km/h',max:120,color:'var(--se-fg)',f:t=>i<2?target*Math.pow(t,.85):64+10*Math.sin(t*3)},{label:i===2?'Lateral · g':'Longitudinal · g',max:1,color:'var(--se-cyan)',f:t=>i===2?Number(r.values[2])*Math.sin(Math.PI*t):i===3?-Number(r.values[3])*Math.sin(Math.PI*t):i===5?-.25*Math.sin(Math.PI*t):.4*Math.sin(Math.PI*t)},{label:'Battery · kW',max:160,color:'var(--se-lime)',f:t=>(i===5?-Number(r.values[5]):i===3?-30:i===4?Number(r.values[4]):110)*Math.sin(Math.PI*t)}];
+ const plots=series.map((s,k)=>{const baseline=40+k*51,amp=24;let d='';for(let n=0;n<=40;n++){const t=n/40;d+=`${n?'L':'M'}${150+t*530},${baseline-s.f(t)/s.max*amp} `;}return `<text x="0" y="${baseline-13}">${s.label}</text><text x="0" y="${baseline+4}">${s.max} / 0 / −${s.max}</text><path class="grid" d="M150 ${baseline}H680"/><path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"/>`;}).join('');
+ return `<div class="trip-top"><div><div class="label">${scope} · ${r.times[i]} · example event</div><h3 class="event-title">${metricNames[i]} &nbsp; ${r.values[i]} <span class="unit">${metricUnits[i]}</span></h3></div><button type="button" class="back cursor-interaction" data-event-back="true">← Records</button></div><svg class="event-plot" viewBox="0 0 700 180" role="img" aria-label="Illustrative synchronized speed, acceleration and battery power traces. Each trace has an independent scale.">${plots}<text x="150" y="177">0 s</text><text x="680" y="177" text-anchor="end">${duration.toFixed(1)} s elapsed</text></svg><div class="event-meta"><span>SOC 71%</span><span>Battery 27°C</span><span>${i<2?'Stationary start · no rollout':i<4?'Filtered IMU peak':'1 s mean · battery electrical power'}</span><span>${i===4?'Instantaneous max 147.3 kW':i===5?'Instantaneous max 49.2 kW':i===2?'Left 0.62 g · Right 0.68 g':i===3?'Combined peak 0.79 g':'3 valid runs in this trip'}</span></div><div class="detail">Illustrative event traces · ${r.compare[i]}</div>`;
+}
+function gg(){
+ const s=scenes[scene]; let cloud='',trail='';
+ for(let i=0;i<160;i++){let a=i*2.39996,r=Math.sqrt((i%43)/43),x=Math.cos(a)*r*.68,y=Math.sin(a)*r*(Math.sin(a)>0?.4:.55); cloud+=`<circle cx="${150+x*112}" cy="${150-y*112}" r="1.4" fill="var(--se-cyan)" opacity=".25"/>`;}
+ for(let i=0;i<32;i++){const t=i/31,x=s.x*t+.055*Math.sin(t*5),y=s.y*t-.07*Math.sin(t*6);trail+=`${i?'L':'M'}${150+x*112},${150-y*112} `;}
+ return `<svg class="gg" viewBox="0 0 300 300" role="img" aria-label="Example G-force plot: lateral ${s.x} g, longitudinal ${s.y} g. Historical cloud and recent trail."><circle class="grid" cx="150" cy="150" r="112"/><circle class="grid" cx="150" cy="150" r="56"/><path class="grid" d="M38 150H262M150 38V262"/><text x="150" y="20" text-anchor="middle">ACCELERATION</text><text x="150" y="287" text-anchor="middle">BRAKING</text><text x="19" y="154">L</text><text x="276" y="154">R</text><text x="207" y="143">0.5g</text><text x="247" y="130">1g</text>${cloud}${prefs.trail?`<path class="trace" d="${trail}"/>`:''}<line x1="150" y1="150" x2="${150+s.x*112}" y2="${150-s.y*112}" stroke="var(--se-lime)" opacity=".4"/><circle class="dot" cx="${150+s.x*112}" cy="${150-s.y*112}" r="15" opacity=".13"/><circle class="dot" cx="${150+s.x*112}" cy="${150-s.y*112}" r="5"/></svg>`;
+}
+function chart(kind){const charge=kind==='charge', energy=kind==='energy';let points=[];for(let i=0;i<=60;i++){let y=charge?(i<15?58+i*.2:61+Math.pow((i-15)/45,1.6)*89):energy?87+23*Math.sin(i*.23)+9*Math.cos(i*.8):88+12*Math.sin(i*.18);points.push(`${60+i*10.5},${y}`);}return `<svg class="plot" viewBox="0 0 750 190" role="img" aria-label="Illustrative ${charge?'charging power by state of charge':energy?'rolling energy consumption over ten minutes':'battery temperature history'}"><path class="grid" d="M60 20V155H710M60 55H710M60 105H710"/><text x="10" y="24">${charge?'kW':energy?'Wh/km':'°C'}</text><text x="28" y="59">${charge?'50':energy?'200':'30'}</text><text x="28" y="109">${charge?'25':energy?'100':'25'}</text><text x="43" y="159">${charge||energy?'0':'20'}</text><path class="area" d="M60 155L${points.join('L')}L690 155Z"/><path class="signal" d="M${points.join('L')}"/><text x="60" y="180">${charge?'10%':'−10 min'}</text><text x="690" y="180" text-anchor="end">${charge?'100% SOC':'Now'}</text></svg>`;}
+function render(){const s=scenes[scene],g=Math.hypot(s.x,s.y).toFixed(2),p=s.power;
+ if(screen==='Trip')view.innerHTML=tripScreen();
+ if(screen==='Drive')view.innerHTML=`<div class="overview"><div><div class="label">Speed · GPS</div><div class="number">${s.speed}</div><div class="unit">km/h</div><div class="block"><div class="label">Battery power</div><div class="reading">${p>0?'+':''}${p.toFixed(1)} <span class="unit">kW</span></div><div class="powerbar">${Array.from({length:14},(_,i)=>`<span class="${p<0?(i<4?'regen':''):(i<Math.ceil(p/10)?'on':'')}"></span>`).join('')}</div><div class="small">${p<0?'Recovering energy':'Drawing from pack'}</div></div></div><div class="gpanel">${gg()}</div><div><div class="label">State of charge</div><div class="number">68<span style="font-size:23px;letter-spacing:0">%</span></div><div class="track"><span style="width:68%"></span></div><div class="small">Displayed SOC</div><div class="block"><div class="label">Car range estimate</div><div class="reading">142 <span class="unit">km</span></div><div class="small">Pack average · 27°C</div></div></div></div><div class="footread"><span class="small">Combined G <strong>${g} g</strong></span><span class="small">Trip <strong>148 Wh/km</strong></span><span class="small">Recovered <strong>0.42 kWh</strong></span></div>`;
+ if(screen==='Dynamics')view.innerHTML=`<div class="wide"><div>${gg()}</div><div><div class="label">Motion / IMU</div><div class="headline">Every corner, traced.</div><div class="row"><span>Lateral acceleration</span><b>${s.x.toFixed(2)} g</b></div><div class="row"><span>Longitudinal acceleration</span><b>${s.y.toFixed(2)} g</b></div><div class="row"><span>Combined acceleration</span><b>${g} g</b></div><div class="row"><span>Trip lateral peak</span><b>0.68 g</b></div><div class="detail">Cloud: trip history · Line: recent path<br>Ring: scale reference, not a grip limit</div></div></div>`;
+ if(screen==='Energy')view.innerHTML=`<div class="label">Consumption / recent history</div><div class="headline">Make every watt count.</div><div class="stats"><div><div class="label">Trip average</div><div class="reading">148 <span class="unit">Wh/km</span></div></div><div><div class="label">Net energy</div><div class="reading">3.60 <span class="unit">kWh</span></div></div><div><div class="label">Recovered</div><div class="reading">0.42 <span class="unit">kWh</span></div></div></div>${chart('energy')}<div class="small">Rolling consumption · Net pack energy · 24.3 km trip</div>`;
+ if(screen==='Battery')view.innerHTML=`<div class="label">Battery / thermal overview</div><div class="headline">Inside the pack.</div><div class="stats"><div><div class="label">Pack voltage</div><div class="reading">361.2 <span class="unit">V</span></div></div><div><div class="label">Temperature avg.</div><div class="reading">27.0 <span class="unit">°C</span></div></div><div><div class="label">Cell voltage spread</div><div class="reading">12 <span class="unit">mV</span></div></div></div>${chart('thermal')}<div class="footread"><span class="small">Minimum <strong>26.4°C</strong></span><span class="small">Maximum <strong>27.8°C</strong></span><span class="small">BMS health estimate <strong>94%</strong></span></div>`;
+ if(screen==='Charge')view.innerHTML=`<div class="label">Charging / example recorded session</div><div class="headline">The shape of a charge.</div><div class="stats"><div><div class="label">Peak pack input</div><div class="reading">48.2 <span class="unit">kW</span></div></div><div><div class="label">Energy added</div><div class="reading">19.6 <span class="unit">kWh</span></div></div><div><div class="label">10–80% elapsed</div><div class="reading">33 <span class="unit">min</span></div></div></div>${chart('charge')}<div class="small">Recorded samples only · Show gaps when vehicle telemetry sleeps</div>`;
+ if(screen==='Drive'){
+ const choices=[['Lateral best','0.68 g'],['Peak regen','44.8 kW'],['Best 0–60','3.8 s'],['Peak draw','141.2 kW']];
+ const choice=choices[bestIndex];
+ view.innerHTML=view.innerHTML.replace('<span class="small">Recovered <strong>0.42 kWh</strong></span>',`<button type="button" class="best-switch cursor-interaction" data-best-next="true" aria-label="Change displayed trip best">${choice[0]} <strong>${choice[1]}</strong> ↻</button>`);
+ }
+ root.querySelectorAll('[data-screen]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.screen===screen)));
+ root.querySelectorAll('[data-scene]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.scene===scene)));
+}
+root.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||!root.contains(b))return;
+ if(b.dataset.screen){screen=b.dataset.screen;event=null;}
+ if(b.dataset.scene)scene=b.dataset.scene;
+ if(b.dataset.scope){scope=b.dataset.scope;event=null;}
+ if(b.dataset.event!==undefined)event=Number(b.dataset.event);
+ if(b.dataset.eventBack)event=null;
+ if(b.dataset.tripView)tripView=b.dataset.tripView;
+ if(b.dataset.bestNext)bestIndex=(bestIndex+1)%4;
+ render();root.querySelector('#se-announcement').textContent=screen==='Trip'?`${scope} · ${event===null?'Trip '+tripView:metricNames[event]}`:`${screen} · ${scene} example`;
+ window.openai?.setWidgetState?.({modelContent:{version:2,screen,scene,scope},privateContent:null}).catch(()=>{});
+});
+window.addEventListener('openai:set_globals',e=>{const s=e.detail?.globals?.widgetState?.modelContent;if(!s||s.version!==2)return;if(screens.includes(s.screen))screen=s.screen;if(scenes[s.scene])scene=s.scene;if(scopes.includes(s.scope))scope=s.scope;event=null;render();});
+render();
+if(globalThis.Tweak){const t=new Tweak({container:root,onChange:render});t.addToggle(prefs,'trail',{label:'Recent G-force trail'});}
+})();
+</script>
+</div>
