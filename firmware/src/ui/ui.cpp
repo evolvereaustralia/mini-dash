@@ -181,7 +181,7 @@ const char *TAB_NAMES[Ui::PAGE_COUNT] = {"DRIVE", "TRIP", "DYNAMICS", "ENERGY", 
 // ---- Drive -----------------------------------------------------------------------------------
 struct {
   lv_obj_t *srcPill = nullptr, *srcL = nullptr, *speed = nullptr, *sub = nullptr;
-  lv_obj_t *power = nullptr, *pFill = nullptr, *pWord = nullptr;
+  lv_obj_t *power = nullptr, *powerUnit = nullptr, *pFill = nullptr, *pWord = nullptr;
   lv_obj_t *soc = nullptr, *socPct = nullptr, *socWin = nullptr, *socFill = nullptr;
   lv_obj_t *range = nullptr, *packLine = nullptr;
   lv_obj_t *combined = nullptr, *trip = nullptr, *bestBtn = nullptr, *bestName = nullptr, *bestVal = nullptr;
@@ -212,33 +212,33 @@ void buildDrive(lv_obj_t *p) {
   D.srcL = buttonLabel(D.srcPill);
   D.speed = blabel(p, &inter_md_88, FG, 16, 110, "—");
   D.sub = blabel(p, &inter_rg_16, MUTED, 20, 136, "km/h");
-  caption(p, 20, yForBaseline(&inter_rg_16, 192), "BATTERY POWER");
-  D.power = blabel(p, &inter_md_30, FG, 20, 226, "—");
-  lv_obj_t *track = panel(p, 20, 240, PBAR_W, 10, LINE, 3);
-  D.pFill = panel(track, (int)(PBAR_W * PBAR_ZERO), 0, 0, 10, LIME, 0);
-  lv_obj_t *zero = panel(track, (int)(PBAR_W * PBAR_ZERO) - 1, -2, 2, 14, FG, 0);
-  (void)zero;
-  blabel(p, &inter_rg_14, MUTED, 20, 268, "−60");
-  blabel(p, &inter_rg_14, MUTED, 20 + (int)(PBAR_W * PBAR_ZERO) - 4, 268, "0");
-  brlabel(p, &inter_rg_14, MUTED, 20 + PBAR_W, 268, 70, "+150 kW");
-  D.pWord = blabel(p, &inter_rg_16, MUTED, 20, 292, "No car data");
+  // State of charge moves slowly: the smaller slot (Logan, 24 Oct 2026).
+  caption(p, 20, yForBaseline(&inter_rg_16, 192), "STATE OF CHARGE");
+  D.soc = blabel(p, &inter_md_30, FG, 20, 226, "—");
+  lv_obj_t *strack = panel(p, 20, 240, 200, 10, LINE, 3);
+  D.socWin = panel(strack, 0, 0, 200, 10, PANEL2, 3);
+  D.socFill = panel(strack, 0, 0, 0, 10, LIME, 3);
+  blabel(p, &inter_rg_16, MUTED, 20, 268, "Displayed SOC");
 
   // centre
   D.plot.create(p, 255, 2, 290);
 
   // right column, ending at x = 780
-  brlabel(p, &inter_rg_16, MUTED, 780, 24, 220, "STATE OF CHARGE");
+  // Battery power changes fast: the big slot, with the zero-centred bar beneath.
+  brlabel(p, &inter_rg_16, MUTED, 780, 24, 220, "BATTERY POWER");
   lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
-  D.soc = brlabel(p, &inter_md_60, FG, 748, 92, 140, "—");
-  D.socPct = brlabel(p, &inter_md_28, MUTED, 780, 92, 30, "%");
-  lv_obj_t *strack = panel(p, 580, 104, 200, 10, LINE, 3);
-  D.socWin = panel(strack, 0, 0, 200, 10, PANEL2, 3);
-  D.socFill = panel(strack, 0, 0, 0, 10, LIME, 3);
-  brlabel(p, &inter_rg_16, MUTED, 780, 136, 200, "Displayed SOC");
+  D.power = brlabel(p, &inter_md_60, FG, 728, 92, 220, "—");
+  D.powerUnit = brlabel(p, &inter_md_28, MUTED, 780, 92, 42, "kW");
+  lv_obj_t *track = panel(p, 580, 104, PBAR_W, 10, LINE, 3);
+  D.pFill = panel(track, (int)(PBAR_W * PBAR_ZERO), 0, 0, 10, LIME, 0);
+  lv_obj_t *zero = panel(track, (int)(PBAR_W * PBAR_ZERO) - 1, -2, 2, 14, FG, 0);
+  (void)zero;
+  D.pWord = blabel(p, &inter_rg_16, MUTED, 580, 136, "No car data");
+  brlabel(p, &inter_rg_14, MUTED, 780, 136, 120, "−60 · +150 kW");
   brlabel(p, &inter_rg_16, MUTED, 780, 192, 200, "RANGE · CAR");
   lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
   D.range = brlabel(p, &inter_md_30, FG, 780, 226, 200, "—");
-  brlabel(p, &inter_rg_16, MUTED, 780, 268, 200, "PACK · 12 V");
+  brlabel(p, &inter_rg_16, MUTED, 780, 268, 200, "PACK · HV");
   lv_obj_set_style_text_letter_space(lv_obj_get_child(p, lv_obj_get_child_cnt(p) - 1), 1, 0);
   D.packLine = brlabel(p, &inter_md_26, FG, 780, 292, 300, "—");
 
@@ -292,7 +292,7 @@ void updateDrive() {
 
   float p = g_vs.car.powerKw;
   if (live) {
-    setTextF(D.power, "%+.1f kW", p);
+    setTextF(D.power, "%+.1f", p);
     setColor(D.power, FG);
     setText(D.pWord, p < 0 ? "Recovering" : "Drawing");
     int zeroX = (int)(PBAR_W * PBAR_ZERO);
@@ -318,7 +318,7 @@ void updateDrive() {
       lastDraw = draw;
     }
   } else {
-    setText(D.power, "— kW");
+    setText(D.power, "—");
     setColor(D.power, MUTED);
     setText(D.pWord, g_vs.car.asleep ? "Car asleep" : "No car data");
     lv_obj_set_width(D.pFill, 0);
@@ -326,7 +326,7 @@ void updateDrive() {
 
   bool slow = carSlow();
   if (slow) {
-    setTextF(D.soc, "%d", (int)lroundf(g_vs.car.socPct));
+    setTextF(D.soc, "%d %%", (int)lroundf(g_vs.car.socPct));
     setColor(D.soc, FG);
     int x0 = (int)(g_vs.car.socMinPct * 2), x1 = (int)(g_vs.car.socMaxPct * 2);
     lv_obj_set_pos(D.socWin, x0, 0);
@@ -335,7 +335,7 @@ void updateDrive() {
     lv_obj_set_width(D.socFill, (int)(g_vs.car.socPct * 2) - x0);
     setTextF(D.range, "%d km", (int)lroundf(g_vs.car.rangeKm));
     setColor(D.range, FG);
-    setTextF(D.packLine, "%.0f °C · %.1f V", g_vs.car.tempAvg, g_vs.car.v12);
+    setTextF(D.packLine, "%.0f °C · %.0f V", g_vs.car.tempAvg, g_vs.car.packV);
     setColor(D.packLine, FG);
   } else {
     setText(D.soc, "—");

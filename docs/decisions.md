@@ -52,4 +52,6 @@ One line of reasoning per decision, dated. Newest at the bottom. Hardware and ar
 - 2026-10-24: Flash is written only while the car is still (speed under 2 km/h for 2 s), at trip end, or when a checkpoint is 10 min overdue. A flash write blocks PSRAM reads and the panel then repeats stale ten-line strips; with a static picture the glitch is invisible. Settings writes stay immediate because they follow a tap on a static page.
 - 2026-10-24: Deferring flash writes to still moments is kept but is not sufficient: the panel repeats one band everywhere while the refill is stalled, so any erase is visible. The fix is to build the framework with code and read-only data executing from PSRAM and the RGB refill interrupt IRAM-safe (pioarduino custom_sdkconfig, env minidash-xip); the prebuilt core lacks both.
 - 2026-10-24: File writes no longer go through a temporary file and rename; LittleFS updates a file atomically on close, and each extra step cost erases.
+- 2026-10-24: On Drive, battery power takes the large right-hand slot and state of charge the smaller left one, because power changes every second and SOC barely moves (Logan).
+- 2026-10-24: Drive's pack line shows the HV pack's current temperature and voltage, not the 12 V battery, which barely moves and matters only when failing; it stays on the Battery page (Logan).
 
