@@ -576,7 +576,12 @@ void updateTrip() {
       static Storage::TraceSample tr[Storage::TRACE_MAX];
       size_t n = 0;
       T.eHasTrace = g_cb.loadTrace && g_cb.loadTrace(r.tripId, T.eventIdx, tr, Storage::TRACE_MAX, &n) && n > 0;
-      for (int k = 0; k < 3; k++) lv_chart_set_all_value(T.eChart[k], T.eSer[k], LV_CHART_POINT_NONE);
+      for (int k = 0; k < 3; k++) {
+        // The trace spans the chart width whatever its length (a record accepted 8 s after boot
+        // has an 8 s window), so the right-hand time label sits where the line ends.
+        lv_chart_set_point_count(T.eChart[k], T.eHasTrace ? n : Storage::TRACE_MAX);
+        lv_chart_set_all_value(T.eChart[k], T.eSer[k], LV_CHART_POINT_NONE);
+      }
       if (T.eHasTrace) {
         for (size_t i = 0; i < n; i++) {
           lv_chart_set_value_by_id(T.eChart[0], T.eSer[0], i, tr[i].kph10);

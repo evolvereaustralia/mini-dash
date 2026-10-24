@@ -354,6 +354,15 @@ void handleSerial() {
       tlog = !tlog;
       TouchGt911::setLogging(tlog);
       Serial.printf("touch logging %s\n", tlog ? "on" : "off");
+    } else if (ch == 'Q') {  // dump the stored trace of the trip's 0-60 record as CSV
+      static Storage::TraceSample tr[Storage::TRACE_MAX];
+      size_t n = 0;
+      if (Storage::loadEvent(g_engine.tripId(), 0, tr, Storage::TRACE_MAX, &n)) {
+        Serial.printf("trace trip %lu rec 0, %u samples: t10,kph10,latMg,lonMg,kw10\n", (unsigned long)g_engine.tripId(), (unsigned)n);
+        for (size_t i = 0; i < n; i++) Serial.printf("T,%u,%d,%d,%d,%d\n", tr[i].t10, tr[i].kph10, tr[i].latMg, tr[i].lonMg, tr[i].kw10);
+      } else {
+        Serial.println("trace: none stored for rec 0");
+      }
     } else if (ch == 'I') {
       g_immediateWrites = !g_immediateWrites;
       Serial.printf("immediate writes %s\n", g_immediateWrites ? "on" : "off");

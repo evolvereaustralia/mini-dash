@@ -64,11 +64,13 @@ void TripEngine::accept(RecordId id, float value, float aux, uint32_t nowMs, flo
   bool beatAll = !isolated_ && (!all_.r[id].valid || (lowerIsBetter ? value < all_.r[id].value : value > all_.r[id].value));
   RecordSet *sets[3] = {&session_, &today_, &all_};
   int nSets = isolated_ ? 1 : 3;
+  bool newBest = false;  // the session record changed: its trace is the one worth keeping
   for (int s = 0; s < nSets; s++) {
     Record &r = sets[s]->r[id];
     r.runs++;
     bool better = !r.valid || (lowerIsBetter ? value < r.value : value > r.value);
     if (!better) continue;
+    if (s == 0) newBest = true;
     if (r.valid) {
       r.previous = r.value;
       r.hasPrevious = true;
@@ -86,7 +88,11 @@ void TripEngine::accept(RecordId id, float value, float aux, uint32_t nowMs, flo
     r.beatLifetime = beatAll;
     if (s == 2) lifetimeDirty_ = true;
   }
-  pendingMs_[id] = nowMs + EVENT_TAIL_MS;  // hand the trace over once the tail has been captured
+  // Hand the trace over once the tail has been captured, but only for a new session best: every
+  // valid run counts (r.runs), yet the stored trace must stay the record's own. Before this
+  // check, the demo's slow 0-50-60 cruise replaced the 2.6 s run's trace with 12 s of cruising
+  // (found 24 Oct 2026 from a trace dump, key Q).
+  if (newBest) pendingMs_[id] = nowMs + EVENT_TAIL_MS;
 }
 
 void TripEngine::traceSample(uint32_t nowMs, float kph, float latG, float lonG, float kw) {
