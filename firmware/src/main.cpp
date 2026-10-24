@@ -229,9 +229,14 @@ void luxPoll() {
 void printStatus(uint32_t uptimeS, uint32_t imuSamplesPerSec) {
   Serial.printf("[%5lu s] ", (unsigned long)uptimeS);
   if (g_gpsOk) {
-    Serial.printf("GPS fix %d%s sats %2d spd %5.2f m/s (+-%4.2f) hAcc %5.1f m alt %6.1f m pvt %lu",
-                  g_gps.fixType, g_gps.fixOk ? "" : "!", g_gps.siv, g_gps.speedMps, g_gps.speedAccMps,
-                  g_gps.hAccM, g_gps.altM, (unsigned long)g_gps.pvtCount);
+    if (g_gps.fixOk) {
+      Serial.printf("GPS fix %d sats %2d spd %5.2f m/s (+-%4.2f) hAcc %5.1f m alt %6.1f m pvt %lu",
+                    g_gps.fixType, g_gps.siv, g_gps.speedMps, g_gps.speedAccMps, g_gps.hAccM, g_gps.altM,
+                    (unsigned long)g_gps.pvtCount);
+    } else {
+      Serial.printf("GPS no fix (type %d) sats %2d pvt %lu", g_gps.fixType, g_gps.siv,
+                    (unsigned long)g_gps.pvtCount);
+    }
     if (g_gps.timeValid) {
       Serial.printf(" %04u-%02u-%02u %02u:%02u:%02uZ", g_gps.year, g_gps.month, g_gps.day, g_gps.hour,
                     g_gps.minute, g_gps.second);
@@ -317,6 +322,7 @@ void setup() {
   g_luxOk = luxBegin();
   Serial.printf("Light VEML7700: %s\n", g_luxOk ? "ok" : "not found");
   Serial.println("keys: s scan, 1..9/0 backlight 10..100%, c bars, w white, k black, r reboot");
+  I2cBus::resetStats();  // init holds are expected to be long; measure steady state from here
 }
 
 void loop() {

@@ -40,8 +40,9 @@ constexpr I2cExpected I2C_EXPECTED[] = {
     {I2C_ADDR_GT911, "GT911 touch", true},
     {I2C_ADDR_ISM330DHCX, "ISM330DHCX IMU", false},
 };
-// Bring-up scan result (CLAUDE.md section 2): PENDING. Fill in the real map here once the
-// scan has run on the board, and stop and ask if anything unexpected appears.
+// Bring-up scan result (CLAUDE.md section 2), 24 Oct 2026, all three sensors on the terminal:
+// 0x10, 0x18, 0x24, 0x40, 0x42, 0x51, 0x5D, 0x6B found, nothing unexpected, nothing missing.
+// The map above is the real map.
 
 // ---------------------------------------------------------------------------------------
 // IO expander at 0x24: Waveshare's own register protocol (ported from the 4.3C repo,

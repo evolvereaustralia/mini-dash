@@ -32,6 +32,11 @@ void unlock() {
 uint32_t overHoldCount() { return g_overHold; }
 uint32_t longestHoldMs() { return g_longestHold; }
 
+void resetStats() {
+  g_overHold = 0;
+  g_longestHold = 0;
+}
+
 size_t scan(uint8_t *found, size_t maxFound) {
   size_t n = 0;
   I2cLock guard(200);
