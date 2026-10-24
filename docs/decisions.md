@@ -12,3 +12,4 @@ One line of reasoning per decision, dated. Newest at the bottom. Hardware and ar
 - 2026-10-24: Two Qwiic-to-header cables into the one screw terminal (IMU chain and light sensor) because the light sensor is out of 50 mm reach and the GPS board's second port faces the wall.
 - 2026-10-24: M2 x 4 heat-set inserts and M2 x 6 screws for all sensor mounts: the CE10192 kit has no M2.5 and M3 inserts do not fit a 6 mm boss.
 - 2026-10-24: USB-C opening is a notch from the shell's seam edge rather than a window, removing a 16 mm bridge.
+- 2026-10-24: Plate adhesive is genuine 3M VHB 5952, not a general-purpose mounting tape: the F56 dash top is a grained low-surface-energy plastic (electrical tape would not stick), Gorilla's data sheet excludes polypropylene, and 5952 is the grade phone-mount makers use on dashes. Promoter only if a hidden test patch fails, because promoter makes removal leave a mark.
