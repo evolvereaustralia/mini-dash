@@ -123,6 +123,11 @@ void handleSerial() {
       LvLock lk;
       Ui::setPage(ch == 'D' ? Ui::PAGE_DRIVE : ch == 'R' ? Ui::PAGE_TRIP : ch == 'Y' ? Ui::PAGE_DYNAMICS
                   : ch == 'E' ? Ui::PAGE_ENERGY : Ui::PAGE_BATTERY);
+    } else if (ch == 't') {
+      static bool tlog = false;
+      tlog = !tlog;
+      TouchGt911::setLogging(tlog);
+      Serial.printf("touch logging %s\n", tlog ? "on" : "off");
     } else if (ch == 'a') {
       LvglPort::logNextFrameAreas();
     } else if (ch == 'T') {
@@ -169,10 +174,11 @@ void setup() {
     cb.clearRecords = uiClearRecords;
     Ui::begin(cb, VERSION);
   }
-  Serial.printf("\nmini-dash %s, built %s %s\n", VERSION, __DATE__, __TIME__);
-  Serial.printf("expander %s, panel %s, touch %s (%s), lvgl %s, splash at %lu ms\n", expander ? "ok" : "NO",
-                g_panel ? "ok" : "NO", g_touchOk ? "ok" : "NO", TouchGt911::productId(), lv ? "ok" : "NO",
-                (unsigned long)(millis() - t0));
+  Serial.printf("\nmini-dash %s, built %s %s, reset reason %d (1 power-on, 3 software, 4 panic, 5 int wdt, 6 task wdt, 7 other wdt, 8 deep sleep, 9 brownout, 10 sdio, 11 usb)\n",
+                VERSION, __DATE__, __TIME__, (int)esp_reset_reason());
+  Serial.printf("expander %s, panel %s, touch %s (%s, config %u x %u), lvgl %s, splash at %lu ms\n", expander ? "ok" : "NO",
+                g_panel ? "ok" : "NO", g_touchOk ? "ok" : "NO", TouchGt911::productId(), TouchGt911::configXMax(),
+                TouchGt911::configYMax(), lv ? "ok" : "NO", (unsigned long)(millis() - t0));
   {
     VsLock lk;
     if (lk.ok()) {
@@ -205,9 +211,10 @@ void loop() {
     LvglPort::stats(&fl, &to, &wt, &hm, &ha);
     LvglPort::touchStats(&tmx, &tav, &tf, &tc);
     Ui::timing(&tk, &pl);
-    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | heap %lu psram %lu i2c %lu ms by %s\n",
+    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | heap %lu psram %lu i2c %lu ms by %s\n",
                   (unsigned long)(millis() / 1000), (int)Ui::page(), vs.demo, vs.disp.speedKph, vs.motion.latG,
-                  vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz,
+                  vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz, vs.disp.lux,
+                  vs.disp.night ? "night" : "day", vs.disp.backlightPct,
                   (unsigned long)LvglPort::frameCount(), (unsigned long)fl, (unsigned long)wt, (unsigned long)to,
                   (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
                   (unsigned long)I2cBus::longestHoldMs(), I2cBus::longestHolder());

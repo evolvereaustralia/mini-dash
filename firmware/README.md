@@ -24,7 +24,7 @@ The 4.3C's single USB-C port is native USB with auto-reset. If upload fails: hol
 
 `src/main.cpp` boots in this order so the screen is on within a second (splash at about 410 ms on the bench): serial, I2C, IO expander (retried, it is slow to wake), RGB panel, GT911, LVGL and the splash; then the sensor task on core 0 and the demo replay. LVGL runs on core 1 with a 100 ms UI tick.
 
-Serial keys: `d` demo replay on/off, `1`..`9`/`0` backlight, `p` screenshot, `n` next tab, `D` `R` `Y` `E` `B` a page (Drive, Trip, Dynamics, Energy, Battery), `x` Settings, `a` log the next frame's invalidated areas, `T` bypass the touch read (diagnostic), `i` I2C scan, `r` reboot. A status line prints every 5 s with render and I2C statistics.
+Serial keys: `d` demo replay on/off, `1`..`9`/`0` backlight, `p` screenshot, `n` next tab, `D` `R` `Y` `E` `B` a page (Drive, Trip, Dynamics, Energy, Battery), `x` Settings, `a` log the next frame's invalidated areas, `T` bypass the touch read (diagnostic), `i` I2C scan, `r` reboot. A status line prints every 5 s with lux, night state, backlight, render and I2C statistics; the boot banner prints the reset reason (11 is a USB reset, which an upload causes).
 
 Screenshots from the Mac, over the same USB cable (needs pyserial and Pillow):
 

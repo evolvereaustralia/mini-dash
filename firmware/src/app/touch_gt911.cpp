@@ -10,8 +10,14 @@
 namespace {
 constexpr uint16_t REG_PRODUCT_ID = 0x8140;
 constexpr uint16_t REG_STATUS = 0x814E;  // bit 7 = buffer ready, bits 0..3 = point count
-constexpr uint16_t REG_POINTS = 0x8150;  // 8 bytes per point: id, x lo, x hi, y lo, y hi, size lo, size hi, pad
+// Point records are 8 bytes starting at 0x814F: track id, x lo, x hi, y lo, y hi, size lo,
+// size hi, reserved. Reading from 0x8150 therefore gives x lo first. (Decoded from the raw
+// bytes on the bench, 24 Oct 2026: a first draft assumed the id came first and sent every
+// tap to x = 799.)
+constexpr uint16_t REG_POINTS = 0x8150;
 char g_productId[5] = "----";
+uint16_t g_xMax = 0, g_yMax = 0;
+volatile bool g_log = false;
 
 bool writeReg(uint16_t reg, const uint8_t *data, uint8_t len) {
   Wire.beginTransmission(I2C_ADDR_GT911);
@@ -51,10 +57,19 @@ bool begin() {
   if (!readReg(REG_PRODUCT_ID, id, 4)) return false;
   for (int i = 0; i < 4; i++) g_productId[i] = (id[i] >= 0x20 && id[i] < 0x7F) ? id[i] : 0;
   g_productId[4] = 0;
+  uint8_t res[4] = {0};
+  if (readReg(0x8048, res, 4)) {  // config: X output max lo/hi, Y output max lo/hi
+    g_xMax = res[0] | (res[1] << 8);
+    g_yMax = res[2] | (res[3] << 8);
+  }
   uint8_t zero = 0;
   writeReg(REG_STATUS, &zero, 1);
   return true;
 }
+
+uint16_t configXMax() { return g_xMax; }
+uint16_t configYMax() { return g_yMax; }
+void setLogging(bool on) { g_log = on; }
 
 const char *productId() { return g_productId; }
 
@@ -77,15 +92,22 @@ int read(Point *points, uint8_t maxPoints) {
     return -1;
   }
   writeReg(REG_STATUS, &zero, 1);
+  uint8_t valid = 0;
   for (uint8_t i = 0; i < count; i++) {
     const uint8_t *p = buf + i * 8;
-    points[i].x = p[1] | (p[2] << 8);
-    points[i].y = p[3] | (p[4] << 8);
-    points[i].strength = p[5] | (p[6] << 8);
-    if (points[i].x >= LCD_H_RES) points[i].x = LCD_H_RES - 1;
-    if (points[i].y >= LCD_V_RES) points[i].y = LCD_V_RES - 1;
+    uint16_t x = p[0] | (p[1] << 8);
+    uint16_t y = p[2] | (p[3] << 8);
+    uint16_t size = p[4] | (p[5] << 8);
+    if (g_log) {
+      Serial.printf("touch raw: n=%u x=%u y=%u size=%u id=%u\n", count, x, y, size, p[7]);
+    }
+    if (x >= LCD_H_RES || y >= LCD_V_RES) continue;  // never clamp a bad point onto an edge control
+    points[valid].x = x;
+    points[valid].y = y;
+    points[valid].strength = size;
+    valid++;
   }
-  return count;
+  return valid;
 }
 
 }  // namespace TouchGt911

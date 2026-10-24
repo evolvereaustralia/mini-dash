@@ -41,4 +41,6 @@ One line of reasoning per decision, dated. Newest at the bottom. Hardware and ar
 - 2026-10-24: The UI tick is 10 Hz; frames follow the tick. The handoff's 30 fps target waits on cheaper rendering of anti-aliased text and lines.
 - 2026-10-24: Demo replay is on by default while phase 3b is under way (bench use); it is labelled DEMO in the header and resets the trip when switched.
 - 2026-10-24: UI text is positioned by baseline from the font metrics, not by box top. The converted digit-only faces have no leading, so box-top placement collided the speed and SOC figures with their captions (Logan's photo); a baseline grid per page also fixes the uneven alignment between mixed sizes.
+- 2026-10-24: Settings gets a gear icon at the right of the header (Montserrat's built-in symbol) because the header tap was undiscoverable; the whole header remains the tap target.
+- 2026-10-24: Hardware behaviour is only logged as a pass when a person or an instrument saw it; the touch row had been marked from read statistics alone and was wrong.
 

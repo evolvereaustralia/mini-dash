@@ -665,11 +665,11 @@ void chartFrame(lv_obj_t *p, const char *unit, const char *const *names, const i
     brlabel(p, &inter_rg_14, MUTED, 60, lineY[i] + 5, 40, names[i]);
     rule(p, 70, lineY[i], 710);
   }
-  blabel(p, &inter_rg_14, MUTED, 70, 252, "−10 min");
-  brlabel(p, &inter_rg_14, MUTED, 780, 252, 60, "now");
+  blabel(p, &inter_rg_14, MUTED, 70, 292, "−10 min");
+  brlabel(p, &inter_rg_14, MUTED, 780, 292, 60, "now");
 }
 lv_obj_t *noData(lv_obj_t *p) {
-  lv_obj_t *o = panel(p, 300, 150, 200, 56, PANEL, 10);
+  lv_obj_t *o = panel(p, 300, 157, 200, 56, PANEL, 10);
   lv_obj_set_style_border_width(o, 1, 0);
   lv_obj_set_style_border_color(o, c(LINE), 0);
   lv_obj_t *l = label(o, &inter_rg_18, MUTED, 0, 0, "NO CAR DATA");
@@ -682,12 +682,13 @@ void buildEnergy(lv_obj_t *p) {
   statCol(p, 215, "NET ENERGY", &E.net);
   statCol(p, 410, "RECOVERED", &E.rec);
   statCol(p, 605, "SOC USED", &E.soc);
-  // range -50..100 over y 100..230: +100 at 100, 0 at 187, -50 at 230
+  // range -50..100 over y 100..270: +100 at 100, 0 at 213, -50 at 270
   static const char *names[3] = {"+100", "0", "−50"};
-  static const int lines[3] = {100, 187, 230};
+  static const int lines[3] = {100, 213, 270};
   chartFrame(p, "kW", names, lines, 3);
-  E.chart = makeChart(p, 70, 100, 710, 130, -50, 100, &E.ser, LIME);
-  E.note = blabel(p, &inter_rg_16, MUTED, 20, 278, "Battery power, last 10 min · above the line draws, below recovers · Wh/km shown only above 15 km/h");
+  E.chart = makeChart(p, 70, 100, 710, 170, -50, 100, &E.ser, LIME);
+  rule(p, 20, 306, 760);
+  E.note = blabel(p, &inter_rg_16, MUTED, 20, 340, "Battery power, last 10 min · above the line draws, below recovers · Wh/km shown only above 15 km/h");
   E.nodata = noData(p);
 }
 void updateEnergy() {
@@ -707,19 +708,19 @@ void buildBattery(lv_obj_t *p) {
   statCol(p, 200, "CURRENT", &B.a);
   statCol(p, 360, "PACK TEMP MIN · AVG · MAX", &B.temp);
   statCol(p, 630, "CELL SPREAD", &B.spread);
-  // range 10..40 over y 100..230: 40 at 100, 25 at 165, 10 at 230
+  // range 10..40 over y 100..270: 40 at 100, 25 at 185, 10 at 270
   static const char *names[3] = {"40", "25", "10"};
-  static const int lines[3] = {100, 165, 230};
+  static const int lines[3] = {100, 185, 270};
   chartFrame(p, "°C", names, lines, 3);
-  B.chart = makeChart(p, 70, 100, 710, 130, 10, 40, &B.ser, LIME);
-  rule(p, 20, 266, 760);
-  // footer: three cells on baseline 306
-  blabel(p, &inter_rg_16, MUTED, 20, 306, "Cells avg / min / max");
-  B.cells = blabel(p, &inter_md_26, FG, 190, 306, "—");
-  blabel(p, &inter_rg_16, MUTED, 466, 306, "12 V");
-  B.v12 = blabel(p, &inter_md_26, FG, 506, 306, "—");
-  blabel(p, &inter_rg_16, MUTED, 616, 306, "BMS health");
-  B.soh = brlabel(p, &inter_md_26, FG, 780, 306, 72, "—");
+  B.chart = makeChart(p, 70, 100, 710, 170, 10, 40, &B.ser, LIME);
+  rule(p, 20, 306, 760);
+  // footer: three cells on baseline 346, like Drive
+  blabel(p, &inter_rg_16, MUTED, 20, 346, "Cells avg / min / max");
+  B.cells = blabel(p, &inter_md_26, FG, 190, 346, "—");
+  blabel(p, &inter_rg_16, MUTED, 466, 346, "12 V");
+  B.v12 = blabel(p, &inter_md_26, FG, 506, 346, "—");
+  blabel(p, &inter_rg_16, MUTED, 616, 346, "BMS health");
+  B.soh = brlabel(p, &inter_md_26, FG, 780, 346, 72, "—");
   B.nodata = noData(p);
 }
 void updateBattery() {
@@ -784,28 +785,30 @@ void resetTripCb(lv_event_t *) {
 void clearRecordsCb(lv_event_t *) {
   if (g_cb.clearRecords) g_cb.clearRecords();
 }
+constexpr int SROW = 50;  // 7 rows of 50 from y 8 fill the 366 px page
+int srowY(int row) { return 8 + row * SROW; }
 lv_obj_t *settingRow(lv_obj_t *p, int col, int row, const char *name) {
-  int x = col == 0 ? 20 : 414, y = 8 + row * 44;
-  blabel(p, &inter_rg_18, FG, x, y + 28, name);
-  rule(p, x, y + 42, 366);
+  int x = col == 0 ? 20 : 414, y = srowY(row);
+  blabel(p, &inter_rg_18, FG, x, y + 31, name);
+  rule(p, x, y + 48, 366);
   return p;
 }
 lv_obj_t *rowValue(lv_obj_t *p, int col, int row, const char *text, uint32_t color = MUTED) {
-  int y = 8 + row * 44;
-  return brlabel(p, &inter_rg_16, color, col == 0 ? 386 : 780, y + 28, 250, text);
+  int y = srowY(row);
+  return brlabel(p, &inter_rg_16, color, col == 0 ? 386 : 780, y + 31, 250, text);
 }
 void buildSettings(lv_obj_t *p) {
   static const char *NIGHT[3] = {"Auto", "On", "Off"};
   static const char *DEMO[2] = {"Off", "Replay"};
   static const char *UNITS[2] = {"km/h", "mph"};
   settingRow(p, 0, 0, "IMU mounting calibration");
-  G.calib = button(p, 300, 12, 86, 34, "Take now", &inter_rg_14, LIME, PANEL, calibCb, nullptr);
+  G.calib = button(p, 300, srowY(0) + 8, 86, 34, "Take now", &inter_rg_14, LIME, PANEL, calibCb, nullptr);
   G.calibL = buttonLabel(G.calib);
   settingRow(p, 0, 1, "Units");
-  G.units = segmented(p, 246, 56, 68, 34, UNITS, 2, unitsCb, &inter_rg_14);
+  G.units = segmented(p, 246, srowY(1) + 8, 68, 34, UNITS, 2, unitsCb, &inter_rg_14);
   G.units.select(0);
   settingRow(p, 0, 2, "Night mode");
-  G.night = segmented(p, 196, 100, 62, 34, NIGHT, 3, nightCb, &inter_rg_14);
+  G.night = segmented(p, 196, srowY(2) + 8, 62, 34, NIGHT, 3, nightCb, &inter_rg_14);
   G.night.select(0);
   settingRow(p, 0, 3, "Brightness");
   G.bright = rowValue(p, 0, 3, "Auto · 100 %");
@@ -817,15 +820,15 @@ void buildSettings(lv_obj_t *p) {
   rowValue(p, 0, 6, "Drive");
 
   settingRow(p, 1, 0, "Trip");
-  button(p, 660, 12, 120, 34, "Reset this trip", &inter_rg_14, FG, PANEL, resetTripCb, nullptr);
+  button(p, 660, srowY(0) + 8, 120, 34, "Reset this trip", &inter_rg_14, FG, PANEL, resetTripCb, nullptr);
   settingRow(p, 1, 1, "All-time records");
-  button(p, 700, 56, 80, 34, "Clear", &inter_rg_14, RED, PANEL, clearRecordsCb, nullptr);
+  button(p, 700, srowY(1) + 8, 80, 34, "Clear", &inter_rg_14, RED, PANEL, clearRecordsCb, nullptr);
   settingRow(p, 1, 2, "Timezone");
   rowValue(p, 1, 2, "Australia/Melbourne");
   settingRow(p, 1, 3, "Diagnostics");
   G.diag = rowValue(p, 1, 3, "");
   settingRow(p, 1, 4, "Demo mode");
-  G.demo = segmented(p, 630, 188, 72, 34, DEMO, 2, demoCb, &inter_rg_14);
+  G.demo = segmented(p, 630, srowY(4) + 8, 72, 34, DEMO, 2, demoCb, &inter_rg_14);
   G.demo.select(1);
   settingRow(p, 1, 5, "WiFi update");
   rowValue(p, 1, 5, "Off · 10 min timeout");
@@ -877,15 +880,17 @@ void buildShell() {
   lv_obj_t *model = blabel(H.header, &inter_sb_16, LIME, 82, 32, "COOPER SE");
   lv_obj_set_style_text_letter_space(model, 2, 0);
   rule(H.scr, 0, HEADER_H - 1, 800);
-  H.clock = brlabel(H.header, &inter_rg_18, FG, 780, 32, 70, "--:--");
-  H.night = brlabel(H.header, &inter_rg_16, MUTED, 706, 32, 50, "day");
+  lv_obj_t *gear = label(H.header, &lv_font_montserrat_16, MUTED, 760, 16, LV_SYMBOL_SETTINGS);
+  (void)gear;
+  H.clock = brlabel(H.header, &inter_rg_18, FG, 746, 32, 70, "--:--");
+  H.night = brlabel(H.header, &inter_rg_16, MUTED, 672, 32, 50, "day");
   H.obd = pill(H.header, 0, 13, "OBD OFF", MUTED);
   H.obdL = buttonLabel(H.obd);
-  lv_obj_align(H.obd, LV_ALIGN_TOP_RIGHT, -150, 13);
-  H.gps = brlabel(H.header, &inter_rg_16, MUTED, 538, 32, 130, "GPS —");
+  lv_obj_align(H.obd, LV_ALIGN_TOP_RIGHT, -184, 13);
+  H.gps = brlabel(H.header, &inter_rg_16, MUTED, 504, 32, 130, "GPS —");
   H.demo = pill(H.header, 0, 13, "DEMO", AMBER);
-  lv_obj_align(H.demo, LV_ALIGN_TOP_RIGHT, -352, 13);
-  H.back = brlabel(H.header, &inter_rg_16, MUTED, 360, 32, 80, "← back");
+  lv_obj_align(H.demo, LV_ALIGN_TOP_RIGHT, -386, 13);
+  H.back = brlabel(H.header, &inter_rg_16, MUTED, 326, 32, 80, "← back");
   show(H.back, false);
 
   H.content = box(H.scr, 0, HEADER_H, 800, CONTENT_H);

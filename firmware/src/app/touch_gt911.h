@@ -21,5 +21,10 @@ int read(Point *points, uint8_t maxPoints);
 
 // Product id string read at begin(), for the diagnostics page ("911" expected).
 const char *productId();
+// Configured X and Y resolution read from the controller at begin() (registers 0x8048..0x804B).
+uint16_t configXMax();
+uint16_t configYMax();
+// Diagnostics: print every raw point read over serial.
+void setLogging(bool on);
 
 }  // namespace TouchGt911

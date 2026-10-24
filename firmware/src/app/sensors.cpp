@@ -162,6 +162,8 @@ void pollImu(uint32_t now) {
   }
 }
 
+uint32_t g_luxFirstMs = 0;
+
 void pollLux(uint32_t now) {
   float lux;
   {
@@ -169,6 +171,11 @@ void pollLux(uint32_t now) {
     if (!guard.ok()) return;
     lux = g_lux.readLux(VEML_LUX_NORMAL_NOWAIT);
   }
+  // The sensor reads 0 until its first integration completes, and the first readings after
+  // begin() are not to be trusted either; a false "night" at boot dimmed the panel to 25 %
+  // (24 Oct 2026). Ignore the first two seconds and any exact zero.
+  if (g_luxFirstMs == 0) g_luxFirstMs = now;
+  if (now - g_luxFirstMs < 2000 || lux <= 0.0f) return;
   {
     VsLock lk;
     if (lk.ok()) Vs::raw().disp.lux = lux;
@@ -184,6 +191,7 @@ void pollLux(uint32_t now) {
     } else if (now - g_luxSinceMs >= 5000) {
       g_night = want;
       g_luxBelow = false;
+      Serial.printf("night mode %s (lux %.0f)\n", g_night ? "on" : "off", lux);
       if (g_nightMode == -1) applyBacklight();
     }
   } else {
