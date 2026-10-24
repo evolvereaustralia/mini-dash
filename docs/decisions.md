@@ -49,4 +49,7 @@ One line of reasoning per decision, dated. Newest at the bottom. Hardware and ar
 - 2026-10-24: Demo trips are never stored and never touch today or lifetime records (the engine runs isolated while the demo is on); their event traces are deleted when the demo trip ends.
 - 2026-10-24: Session record comparisons are against the last stored trip; a first-ever record says so. Today is seeded from today's stored trips at trip start, lifetime from NVS.
 - 2026-10-24: Wall clock from the board's PCF85063A RTC, set from GPS once per boot; UTC stored, Australia/Melbourne with the DST rule for display and day grouping.
+- 2026-10-24: Flash is written only while the car is still (speed under 2 km/h for 2 s), at trip end, or when a checkpoint is 10 min overdue. A flash write blocks PSRAM reads and the panel then repeats stale ten-line strips; with a static picture the glitch is invisible. Settings writes stay immediate because they follow a tap on a static page.
+- 2026-10-24: Deferring flash writes to still moments is kept but is not sufficient: the panel repeats one band everywhere while the refill is stalled, so any erase is visible. The fix is to build the framework with code and read-only data executing from PSRAM and the RGB refill interrupt IRAM-safe (pioarduino custom_sdkconfig, env minidash-xip); the prebuilt core lacks both.
+- 2026-10-24: File writes no longer go through a temporary file and rename; LittleFS updates a file atomically on close, and each extra step cost erases.
 

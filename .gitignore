@@ -8,3 +8,9 @@ __pycache__/
 .DS_Store
 # Python virtualenvs
 .venv/
+# pioarduino hybrid (IDF) build artefacts
+firmware/.dummy/
+firmware/managed_components/
+firmware/dependencies.lock
+firmware/CMakeLists.txt
+firmware/sdkconfig*

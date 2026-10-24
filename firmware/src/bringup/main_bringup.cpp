@@ -1,3 +1,5 @@
+// Compiled only in env:bringup (the hybrid IDF build ignores build_src_filter).
+#ifdef MINIDASH_BRINGUP
 // Mini Dash phase 3a: board bring-up (CLAUDE.md section 10).
 //
 // Proves, in order: USB CDC serial, PSRAM and flash settings, the I2C map against
@@ -347,3 +349,5 @@ void loop() {
   handleSerial();
   delay(1);
 }
+
+#endif  // MINIDASH_BRINGUP

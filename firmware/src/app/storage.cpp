@@ -16,6 +16,7 @@ constexpr uint32_t EVENT_MAGIC = 0x45564E54;  // "EVNT"
 
 Preferences g_prefs;
 bool g_fsOk = false;
+uint32_t g_writes = 0;
 
 struct TripFile {
   uint32_t magic;
@@ -25,19 +26,15 @@ struct TripFile {
 };
 
 bool writeBlock(const char *path, const void *data, size_t n) {
-  // Write to a temporary name and rename, so a power cut leaves either the old or the new file.
-  String tmp = String(path) + ".tmp";
-  File f = LittleFS.open(tmp, "w");
+  // LittleFS updates a file atomically on close (copy on write), so a power cut leaves the
+  // old or the new content. No temporary file and rename: each extra step costs flash erases,
+  // and every erase stalls the panel refill (see main.cpp, deferred writes).
+  g_writes++;
+  File f = LittleFS.open(path, "w");
   if (!f) return false;
   size_t w = f.write(static_cast<const uint8_t *>(data), n);
-  f.flush();
   f.close();
-  if (w != n) {
-    LittleFS.remove(tmp);
-    return false;
-  }
-  LittleFS.remove(path);
-  return LittleFS.rename(tmp, path);
+  return w == n;
 }
 
 bool readTrip(const char *path, Storage::TripSummary &out) {
@@ -114,6 +111,7 @@ bool begin() {
 }
 
 bool fsOk() { return g_fsOk; }
+uint32_t writeCount() { return g_writes; }
 size_t fsUsedBytes() { return g_fsOk ? LittleFS.usedBytes() : 0; }
 size_t fsTotalBytes() { return g_fsOk ? LittleFS.totalBytes() : 0; }
 
@@ -125,6 +123,7 @@ void loadSettings(Settings &s) {
 }
 
 void saveSettings(const Settings &s) {
+  g_writes++;
   g_prefs.putBytes("set", &s, sizeof(s));
   g_prefs.putUChar("set_v", s.version);
 }
@@ -136,6 +135,7 @@ void loadLifetime(RecordSet &all) {
 }
 
 void saveLifetime(const RecordSet &all) {
+  g_writes++;
   g_prefs.putBytes("life", &all, sizeof(all));
   g_prefs.putUChar("life_v", 1);
 }
@@ -201,6 +201,7 @@ bool saveEvent(uint32_t tripId, int rec, const TraceSample *samples, size_t n) {
     uint32_t magic;
     uint32_t count;
   } hdr = {EVENT_MAGIC, (uint32_t)n};
+  g_writes++;
   File f = LittleFS.open(path, "w");
   if (!f) return false;
   bool ok = f.write(reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)) == sizeof(hdr) &&

@@ -100,11 +100,16 @@ bool luxBegin() {
   return true;
 }
 
+// Night level: 25 percent read as "dims, still readable" with a finger over the sensor in a
+// lit room, but in a 2 lux room Logan could not see an image at all (24 Oct 2026). The PWM
+// to brightness curve of this backlight is steep at the dim end; 45 is the next guess to be
+// judged by eye on the first night drive (measured brightness is an open test).
+constexpr uint8_t NIGHT_BACKLIGHT_PCT = 45;
 void applyBacklight() {
   uint8_t pct;
   if (g_nightMode == 0) pct = g_manualBrightness;
-  else if (g_nightMode == 1) pct = g_manualBrightness < 40 ? g_manualBrightness : 25;
-  else pct = g_night ? 25 : 100;
+  else if (g_nightMode == 1) pct = g_manualBrightness < 60 ? g_manualBrightness : NIGHT_BACKLIGHT_PCT;
+  else pct = g_night ? NIGHT_BACKLIGHT_PCT : 100;
   IoExpander::setBacklightPercent(pct);
   VsLock lk;
   if (lk.ok()) {

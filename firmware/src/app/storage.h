@@ -51,6 +51,7 @@ struct TraceSample {
 constexpr size_t TRACE_MAX = 120;  // 12 s
 
 bool begin();  // mounts; returns false if the file system is unusable (NVS still works)
+uint32_t writeCount();  // flash writes (files and NVS) since boot, for the diagnostics line
 bool fsOk();
 size_t fsUsedBytes();
 size_t fsTotalBytes();

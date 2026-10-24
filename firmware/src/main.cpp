@@ -6,6 +6,7 @@
 // RGB565, decode with tools/screenshot.py), n = next tab, D R Y E B = a page, x = settings, i = I2C scan, r = reboot.
 
 #include <Arduino.h>
+#include <string.h>
 #include <LittleFS.h>
 
 #include "esp_heap_caps.h"
@@ -32,6 +33,7 @@ esp_lcd_panel_handle_t g_panel = nullptr;
 bool g_touchOk = false;
 Storage::Settings g_settings;
 uint32_t g_lastCheckpointMs = 0;
+uint32_t g_lastCheckpointWriteMs = 0;
 uint32_t g_tripStartUtc = 0;
 
 // Storage statistics into the state (after boot and whenever a trip is saved).
@@ -54,6 +56,8 @@ void refreshStoreStats() {
   st.totalKb = Storage::fsTotalBytes() / 1024;
 }
 
+void flushDeferredWrites(bool force);
+
 // Close the running trip into a trip file (unless it is a demo or went nowhere) and start a
 // new one. Used by "Reset this trip" and at boot for a checkpoint left by a power cut.
 void finishTrip(bool fromCheckpoint, const Storage::TripSummary *checkpoint) {
@@ -64,6 +68,7 @@ void finishTrip(bool fromCheckpoint, const Storage::TripSummary *checkpoint) {
     g_engine.summary(t, millis(), Demo::enabled());
   }
   t.closed = true;
+  flushDeferredWrites(true);  // the trip's last events go with it
   if (!t.demo && t.trip.distanceKm > 0.05f) {
     if (Storage::saveTrip(t)) {
       g_engine.setLastTrip(t.records);
@@ -91,6 +96,7 @@ void startNewTrip() {
     }
   }
   g_lastCheckpointMs = millis();
+  g_lastCheckpointWriteMs = millis();  // the overdue hatch counts from the trip start
   refreshStoreStats();
 }
 
@@ -104,8 +110,59 @@ void saveSettings(const Ui::UiSettings &u) {
   Storage::saveSettings(g_settings);
 }
 
+// Flash writes are deferred until the car has been still for 2 s (or the trip ends, or a
+// checkpoint is 10 min overdue). While the chip writes flash it cannot read PSRAM, and the
+// panel's bounce buffers then repeat stale ten-line strips: banded digits and ghost text
+// (Logan's photos, 24 Oct 2026). When nothing on screen moves, the stale strips are identical
+// to the live ones and the write is invisible.
+// Event traces and checkpoints are held back entirely until flash writes stop disturbing the
+// panel (framework rebuild or SD card, see docs/test-log.md); key V toggles them for tests.
+// Settings and lifetime records still write, rarely and at standstill.
+volatile bool g_suppressWrites = true;
+volatile bool g_immediateWrites = false; // diagnostics key I: write at once, ignoring the still rule
+struct PendingEvent {
+  bool pending = false;
+  uint32_t tripId = 0;
+  size_t n = 0;
+  Storage::TraceSample samples[Storage::TRACE_MAX];
+};
+PendingEvent g_pendingEvents[REC_COUNT];
+bool g_checkpointDue = false;
+uint32_t g_stillSinceMs = 0;
+constexpr uint32_t STILL_MS = 2000;
+constexpr uint32_t CHECKPOINT_FORCE_MS = 10 * 60 * 1000;
+
 void eventSink(uint32_t tripId, int rec, const Storage::TraceSample *samples, size_t n) {
-  Storage::saveEvent(tripId, rec, samples, n);
+  if (g_suppressWrites || rec < 0 || rec >= REC_COUNT) return;
+  PendingEvent &p = g_pendingEvents[rec];  // the latest window for a record replaces an unsaved one
+  p.pending = true;
+  p.tripId = tripId;
+  p.n = n > Storage::TRACE_MAX ? Storage::TRACE_MAX : n;
+  memcpy(p.samples, samples, p.n * sizeof(Storage::TraceSample));
+}
+
+// Write ONE queued item per call while the car is still (the caller runs every 100 ms), so a
+// burst of writes cannot spill into the first second of motion; force writes everything.
+void flushDeferredWrites(bool force) {
+  uint32_t nowMs = millis();
+  for (int i = 0; i < REC_COUNT; i++) {
+    if (!g_pendingEvents[i].pending) continue;
+    Storage::saveEvent(g_pendingEvents[i].tripId, i, g_pendingEvents[i].samples, g_pendingEvents[i].n);
+    g_pendingEvents[i].pending = false;
+    if (!force) return;
+  }
+  if (g_checkpointDue && !Demo::enabled() && !g_suppressWrites) {
+    Storage::TripSummary t;
+    {
+      VsLock lk;
+      if (lk.ok()) g_engine.summary(t, nowMs, false);
+    }
+    if (t.trip.distanceKm > 0.05f) Storage::saveActive(t);
+    g_checkpointDue = false;
+    g_lastCheckpointWriteMs = nowMs;
+    if (!force) return;
+  }
+  if (g_engine.lifetimeDirty()) Storage::saveLifetime(g_engine.lifetime());
 }
 bool uiLoadTrace(uint32_t tripId, int rec, Storage::TraceSample *out, size_t max, size_t *n) {
   return Storage::loadEvent(tripId, rec, out, max, n);
@@ -244,6 +301,12 @@ void handleSerial() {
       tlog = !tlog;
       TouchGt911::setLogging(tlog);
       Serial.printf("touch logging %s\n", tlog ? "on" : "off");
+    } else if (ch == 'I') {
+      g_immediateWrites = !g_immediateWrites;
+      Serial.printf("immediate writes %s\n", g_immediateWrites ? "on" : "off");
+    } else if (ch == 'V') {
+      g_suppressWrites = !g_suppressWrites;
+      Serial.printf("event saves %s\n", g_suppressWrites ? "suppressed" : "enabled");
     } else if (ch == 'e') {
       LvLock lk;
       Ui::openEvent(0);
@@ -352,25 +415,33 @@ void setup() {
 void loop() {
   handleSerial();
   uint32_t nowMs = millis();
-  // Checkpoint the active trip every 30 s so a power cut loses at most that much.
+  // A checkpoint falls due every 30 s; it is written at the next still moment (below) so a
+  // power cut loses at most 30 s plus the time to the next stop, or 10 min on a long run.
   if (nowMs - g_lastCheckpointMs >= Storage::CHECKPOINT_MS) {
     g_lastCheckpointMs = nowMs;
+    g_checkpointDue = true;
     if (g_tripStartUtc == 0 && Clock::nowUtc()) {  // the clock arrived after the trip started
-      uint32_t up = (nowMs - g_lastCheckpointMs) / 1000;
-      (void)up;
       g_tripStartUtc = Clock::nowUtc() - (nowMs / 1000);
       VsLock lk;
       if (lk.ok()) g_engine.startTrip(g_engine.tripId(), nowMs, g_tripStartUtc), g_engine.publish(Vs::raw());
     }
-    if (!Demo::enabled()) {
-      Storage::TripSummary t;
-      {
-        VsLock lk;
-        if (lk.ok()) g_engine.summary(t, nowMs, false);
-      }
-      if (t.trip.distanceKm > 0.05f) Storage::saveActive(t);
+  }
+  // Still detection on the displayed speed, and the deferred flush.
+  {
+    static uint32_t lastStillCheck = 0;
+    if (nowMs - lastStillCheck >= 100) {
+      lastStillCheck = nowMs;
+      VehicleState vs;
+      Vs::snapshot(vs);
+      bool still = vs.disp.speedKph < 2.0f;
+      if (!still) g_stillSinceMs = 0;
+      else if (g_stillSinceMs == 0) g_stillSinceMs = nowMs;
+      bool stillLongEnough = still && g_stillSinceMs && nowMs - g_stillSinceMs >= STILL_MS;
+      // The overdue hatch applies to a real checkpoint only: after 10 min with no stop, one
+      // write while moving is the price of not losing the trip to a power cut.
+      bool overdue = g_checkpointDue && !Demo::enabled() && nowMs - g_lastCheckpointWriteMs >= CHECKPOINT_FORCE_MS;
+      if (stillLongEnough || overdue || g_immediateWrites) flushDeferredWrites(overdue);
     }
-    if (g_engine.lifetimeDirty()) Storage::saveLifetime(g_engine.lifetime());
   }
   static uint32_t last = 0;
   if (millis() - last >= 5000) {
@@ -383,12 +454,12 @@ void loop() {
     Ui::timing(&tk, &pl);
     uint32_t gm, gb, gn, ga;
     Sensors::gpsStats(&gm, &gb, &gn, &ga);
-    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B | heap %lu psram %lu i2c %lu ms by %s\n",
+    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B | flash writes %lu | heap %lu psram %lu i2c %lu ms by %s\n",
                   (unsigned long)(millis() / 1000), (int)Ui::page(), vs.demo, vs.disp.speedKph, vs.motion.latG,
                   vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz, vs.disp.lux,
                   vs.disp.night ? "night" : "day", vs.disp.backlightPct,
                   (unsigned long)LvglPort::frameCount(), (unsigned long)fl, (unsigned long)wt, (unsigned long)to,
-                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
+                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Storage::writeCount(), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
                   (unsigned long)I2cBus::longestHoldMs(), I2cBus::longestHolder());
   }
   delay(10);
