@@ -314,9 +314,11 @@ void handleSerial() {
       Sensors::setNightMode(0);
       Sensors::setBrightness(pct);
       Serial.printf("backlight %u%%\n", pct);
-    } else if (ch == 'd') {
+    } else if (ch == 'd') {  // toggles the replay and stores it, as the Settings switch does
       Demo::setEnabled(!Demo::enabled());
-      Serial.printf("demo %s\n", Demo::enabled() ? "on" : "off");
+      g_settings.demo = Demo::enabled();
+      Storage::saveSettings(g_settings);
+      Serial.printf("demo %s (stored)\n", Demo::enabled() ? "on" : "off");
     } else if (ch == 'p') {
       screenshot();
     } else if (ch == 'i') {
@@ -511,7 +513,7 @@ void setup() {
                       Sensors::imuOk() ? "IMU ready" : "IMU absent");
   }
   Demo::start(&g_engine);
-  Demo::setEnabled(g_settings.demo);  // stored; the bench default is on while phase 3b is under way
+  Demo::setEnabled(g_settings.demo);  // stored; off by default, Settings turns the replay on for the bench
   startNewTrip();
   Serial.println("keys: d demo, 1..9/0 backlight, p screenshot, n next tab, D/R/Y/E/B page, x settings, i scan, r reboot");
 }

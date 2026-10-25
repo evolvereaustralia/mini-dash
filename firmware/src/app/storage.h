@@ -22,7 +22,7 @@ struct Settings {
   uint8_t brightness = 100;
   uint8_t startScreen = 0;  // 0 Drive, 1 last page
   uint8_t bestField = 0;
-  bool demo = true;
+  bool demo = false;  // the replay is a bench tool; off by default from the first drive (25 Oct 2026)
   bool calibrated = false;
   float gRef[3] = {0, 0, 1};
   bool accCalibrated = false;       // sphere-fit offsets taken (docs/calibration.md)
