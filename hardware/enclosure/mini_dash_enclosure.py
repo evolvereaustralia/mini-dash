@@ -1,5 +1,5 @@
 """
-Mini Dash enclosure, draft 2.5 (parametric, CadQuery).
+Mini Dash enclosure, draft 2.6 (parametric, CadQuery).
 
 Four printed parts, no supports, no glue:
   1. bezel   : printed FACE DOWN. Plate with the screen window; pocket walls hold the
@@ -35,8 +35,14 @@ GLASS_W, GLASS_H, GLASS_R = 112.4, 75.1, 4.0
 GLASS_CY = -1.94               # glass centre in STEP frame (we re-origin on it)
 STACK = 10.2                   # glass front to PCB back
 TERM_DEPTH = 17.2              # glass front to the back of the screw-terminal plug
-PCB_HOLES = [(-46, -22 - GLASS_CY), (46, -22 - GLASS_CY), (-46, 28 - GLASS_CY), (46, 28 - GLASS_CY)]
-PCB_HOLE_HEAD = 4.5            # the screw heads / standoffs proud of the PCB back
+PCB_HOLES = [(-46, -22 - GLASS_CY), (46, -22 - GLASS_CY), (-46, 28 - GLASS_CY), (46, 28 - GLASS_CY)]   # reference only
+# Display press bosses (draft 2.6): four pads on BARE PCB back, chosen from Waveshare's STEP. They only press the
+# board forward against the bezel lip; the bezel pocket centres the glass. The old bosses at the PCB holes landed
+# on the DC input terminal and let the board sit off-centre. Positions avoid every part on the PCB back, the GPS
+# and IMU boards and the antenna lead's straight run. The two upper ones sit 3.5 to 4 mm inside the PCB's side edges, just outboard of Waveshare's
+# corner standoffs at x +-46 and clear of the IMU's left Qwiic plug and the GPS board's right edge.
+PCB_PRESS = [(-40.0, -21.0), (-50.5, 31.0), (36.0, -21.0), (51.0, 31.0)]
+PCB_PRESS_R = 2.5
 LCD_CY = -2.4 - GLASS_CY       # active-area centre offset
 WIN_W, WIN_H, WIN_R = 102.0, 61.0, 2.0
 USBC_Y, USBC_Z0, USBC_Z1 = -2.5 - GLASS_CY, 9.4, 13.5   # USB-C receptacle on the +X end
@@ -54,7 +60,12 @@ VISOR_CAV = ANT_T + ANT_PAD + 0.6                     # 9.7: pad stays on, stick
 LIGHT_X, LIGHT_FWD = 42.0, 14.6                      # board centre (x, forward of the bezel face); front edge 2.7 mm behind the cover
 LIGHT_BOARD_L, LIGHT_BOARD_W, LIGHT_HOLE_PITCH = 25.49, 17.80, 20.3
 LIGHT_SLOT_W, LIGHT_SLOT_D = 7.0, 3.5                 # slot in the cover in front of the lens
-QWIIC_NOTCH_X = 22.0                                  # second floor notch, for the light sensor's Qwiic cable
+QWIIC_NOTCH_X = 22.0                                  # floor notch for the light sensor's Qwiic cable, outside the antenna pocket
+COAX_NOTCH_X = -21.0                                  # floor notch for the antenna lead, outside the pocket on the -X side
+NOTCH_Z0, NOTCH_Z1 = -22.0, -13.5                     # both notches sit BEHIND the bezel's 13 mm pocket wall (draft 2.6)
+SIDE_RIB_GAP_Z = -3.0                                 # the -X side rib stops here so the antenna lead can leave the pocket
+LIGHT_SCREW_HOLE = 2.4                                # M2 x 12 clearance through boss and roof; nut under the board, head on top
+LIGHT_HEAD_CBORE, LIGHT_HEAD_DEPTH = 4.2, 1.2         # counterbore for the M2 button head in the roof top
 COVER_T, COVER_GROOVE = 1.0, 0.8                      # slide-in visor cover
 # snaps
 FINGER_W, FINGER_L, FINGER_GAP = 8.0, 9.0, 0.8
@@ -64,11 +75,16 @@ BUMP_Z0, BUMP_Z1 = 10.0, 12.0  # catch face at Z0, ramp from Z1 to wall top
 TOP_CATCH_RISE = 1.0           # top fingers: 45-degree catch so the bezel can be pulled off; bottom fingers: flat catch, released through the windows
 # sensors on the shell back (inside face)
 BOSS_H, BOSS_OD, INSERT_HOLE = 5.0, 6.0, 3.2   # IMU bosses; hole for the kit's M2 x 4 mm inserts (3.5 OD). The CE10192 kit has no M2.5.
-GPS_BOSS_H = 3.0               # GPS board low: its edge-mount SMA jack and plug (7.9 dia) must clear the display PCB back at z -10.2
+GPS_BOSS_H = 2.0               # GPS board low (M2 x 3 inserts here): its SMA jack, plug and the 30 mm stiff lead run under the display back
 INSERT_DEPTH_INTO_WALL = 1.5   # insert holes run on into the 2 mm back wall so a 4 mm insert seats fully in a 3 mm boss
-GPS_ORIGIN = (-57.0, -13.0)    # SparkFun NEO-M9N SMA board local origin (its corner) in device frame
-GPS_HOLES = [(2.54, 2.54), (38.1, 2.54), (2.54, 34.2646), (38.1, 34.2646)]
-IMU_C = (26.0, 2.0)            # SparkFun 1x1" ISM330DHCX centre; x = 26 keeps its screw heads clear of the connector row on the display back (x up to 12.6)
+# Draft 2.6 layout: the GPS board moved to the RIGHT half, rotated 180 degrees in plane (components still toward the
+# display), so its edge-mount SMA jack points -X and the lead's plug plus 30 mm stiff section (about 50 mm straight)
+# runs left along y = 3.9 under bare PCB (0.8 mm above the connector row's footprint), clear of everything, from x = 7.6 to x = -42 and on to the coax notch in the top wall at x = -21. The IMU moved
+# to the upper left, above that lane. GPS_CORNER is the board's local (40.64, 36.8) corner in the device frame.
+GPS_CORNER = (48.0, 29.5)
+GPS_HOLES = [(2.54, 2.54), (38.1, 2.54), (2.54, 34.2646), (38.1, 34.2646)]     # board local, SparkFun brd
+GPS_ORIGIN = (GPS_CORNER[0] - 40.64, GPS_CORNER[1] - 36.8046)                  # board local origin in device frame
+IMU_C = (-33.0, 22.0)          # SparkFun 1x1" ISM330DHCX centre, upper left, above the antenna lead's lane
 IMU_PITCH = 20.32              # confirmed from SparkFun brd 24 Oct 2026: 25.4 sq board, holes 2.54 in
 IMU_STANDOFF = 0.0             # components face the display PCB; 5 mm bosses leave 1.4 mm over the Qwiic plugs under the PCB-back parts
 # dovetail (draft 2.4): RAIL on the shell, GROOVE in the plate.
@@ -154,8 +170,9 @@ def make_shell():
     s = s.union(visor)
     # antenna pocket: back wall, two side ribs and a front stop rib (floor to roof, 9.7 mm bridge, four-side anchored)
     ant_z0 = SHELL_BACK + SHELL_T
-    for sx in (1, -1):
-        s = s.union(box(sx * (ANT_W / 2 + 1) - 1, sx * (ANT_W / 2 + 1) + 1, floor_y, roof_y, SHELL_BACK, ant_z0 + ANT_D + 2.0))
+    # the -X rib stops short of the front so the antenna lead can leave the pocket at its front-left corner
+    for sx, zend in ((1, ant_z0 + ANT_D + 2.0), (-1, SIDE_RIB_GAP_Z)):
+        s = s.union(box(sx * (ANT_W / 2 + 1) - 1, sx * (ANT_W / 2 + 1) + 1, floor_y, roof_y, SHELL_BACK, zend))
     # front stop rib floor to roof, 2 mm thick, with a gabled (chevron) section so it climbs from both walls at
     # 45 degrees instead of bridging the 9.7 mm cavity
     rz0, mid_y, hh = ant_z0 + ANT_D, (floor_y + roof_y) / 2, (roof_y - floor_y) / 2
@@ -164,15 +181,16 @@ def make_shell():
                       (mid_y, rz0 + hh + 2.0), (floor_y, rz0 + 2.0)]).close()
            .extrude(ANT_W + 4))
     s = s.union(rib)
-    # two chevron-topped notches through the floor (= the tray's top wall), so they print without a bridge:
-    # coax notch under the antenna's front edge, just behind the stop rib; Qwiic notch outside the pocket, between the
-    # side rib and the light sensor, for the light sensor's cable (a JST SH plug is about 6 x 3.5 mm)
-    nz0, nz1 = ant_z0 + ANT_D - 8.0, ant_z0 + ANT_D - 0.2
+    # two chevron-topped notches through the floor (= the tray's top wall), so they print without a bridge. Both sit
+    # BEHIND the bezel's 13 mm pocket wall, which is the only part of the top wall the tray can reach (draft 2.5 had
+    # them in front of it, where the bezel wall blocked them). Coax notch at x = -21, outside the pocket, 10 mm wide
+    # and 8.5 long so the SMA plug and its 30 mm stiff section can be fed through at an angle; Qwiic notch at x = 22
+    # for the light sensor's cable (a JST SH plug is about 6 x 3.5 mm).
     def notch(xc, hw):
-        return (cq.Workplane("XZ").workplane(offset=-(floor_y + 1)).center(xc, 0)
-                .polyline([(-hw, nz0), (hw, nz0), (hw, nz1), (0, nz1 + hw), (-hw, nz1)]).close()
-                .extrude(SHELL_T + 2))
-    s = s.cut(notch(0.0, 3.0)).cut(notch(QWIIC_NOTCH_X, 4.0))
+        return (cq.Workplane("XZ").workplane(offset=-(floor_y + 0.01)).center(xc, 0)
+                .polyline([(-hw, NOTCH_Z0), (hw, NOTCH_Z0), (hw, NOTCH_Z1), (0, NOTCH_Z1 + hw), (-hw, NOTCH_Z1)]).close()
+                .extrude(SHELL_T + 1.02))
+    s = s.cut(notch(COAX_NOTCH_X, 5.0)).cut(notch(QWIIC_NOTCH_X, 4.0))
     # cover grooves in roof and floor, and the entry slot through the +X side wall
     # Grooves are cut with a 45-degree front face (trapezoid section) so the wall above them is never a flat
     # overhang: a square groove 119 mm long reads to the slicer as a 119 mm bridge. The side-wall entry slot gets
@@ -204,10 +222,12 @@ def make_shell():
         wp = cq.Workplane("XZ").workplane(offset=-roof_y).center(bx, bz)
         b = wp.circle(BOSS_OD / 2).extrude(4.0)
         b = b.union(box(bx - BOSS_OD / 2, bx + BOSS_OD / 2, roof_y - 4.0, roof_y + 0.01, SHELL_BACK + SHELL_T - 0.01, bz))
-        # insert hole open at the free end (the board side), blind 0.6 mm short of the roof
-        wph = cq.Workplane("XZ").workplane(offset=-(roof_y - 0.6)).center(bx, bz)
-        b = b.cut(teardrop(wph, INSERT_HOLE / 2, up=True, length=4.4))
         s = s.union(b)
+        # M2 x 12 clearance hole straight through roof and boss (screw head on the roof top, nut under the board:
+        # there is no room to heat-set an insert in a boss hanging inside the visor), with a counterbore for the head
+        wph = cq.Workplane("XZ").workplane(offset=-(roof_y + SHELL_T + 0.5)).center(bx, bz)
+        s = s.cut(teardrop(wph, LIGHT_SCREW_HOLE / 2, up=True, length=SHELL_T + 4.0 + 1.0))
+        s = s.cut(teardrop(wph, LIGHT_HEAD_CBORE / 2, up=True, length=0.5 + LIGHT_HEAD_DEPTH))
 
     # --- snap windows in top/bottom walls
     for sy in (1, -1):
@@ -219,34 +239,33 @@ def make_shell():
     # --- USB-C opening in the +X end wall: a notch open at the shell's front (seam) edge rather than a window, so
     # there is no 16 mm bridge. The bezel wall behind it still closes the part above the plug.
     s = s.cut(box(SHELL_IN_W / 2 - 1, SHELL_W / 2 + 1, USBC_Y - 8.0, USBC_Y + 8.0, -(USBC_Z1 + 1.5), 1.0))
-    # --- SMA knockout for a future external antenna, -X end wall (teardrop so its ceiling is not a bridge)
+    # --- SMA knockout for a future external antenna, -X end wall: a 6.6 mm teardrop recess from the outside leaving
+    # a 0.4 mm skin on the inside, drilled out only if the external puck is ever needed
     sma = cq.Workplane("YZ").workplane(offset=-SHELL_W / 2 - 1).center(-25.0, -12.0)
     k = 3.3 / math.sqrt(2)
-    s = s.cut(sma.circle(3.3).extrude(SHELL_T + 2)
-              .union(sma.polyline([(-k, k), (k, k), (0, 3.3 * math.sqrt(2))]).close().extrude(SHELL_T + 2)))
+    s = s.cut(sma.circle(3.3).extrude(1 + SHELL_T - 0.4)
+              .union(sma.polyline([(-k, k), (k, k), (0, 3.3 * math.sqrt(2))]).close().extrude(1 + SHELL_T - 0.4)))
 
     # --- vents: vertical slots in both end walls, slots in the back plate
     for sx in (1, -1):
         for y in (-34, -28, 22, 28, 34):
             s = s.cut(box(sx * (SHELL_IN_W / 2 - 1), sx * (SHELL_W / 2 + 1), y - 0.9, y + 0.9, -20.0, -6.0))
     for x in (40, 44, 48, 52, 56):
-        s = s.cut(box(x - 1.0, x + 1.0, -13.0, 7.0, SHELL_BACK - 1, SHELL_IN_BACK + 1))
+        s = s.cut(box(x - 1.0, x + 1.0, 2.0, 22.0, SHELL_BACK - 1, SHELL_IN_BACK + 1))
     for x in (-36, -40, -44, -48, -52):
         s = s.cut(box(x - 1.0, x + 1.0, -36.0, -26.0, SHELL_BACK - 1, SHELL_IN_BACK + 1))
 
-    # --- bosses that press the display PCB forward against the bezel lip (recess seats over the screw heads)
-    for (x, y) in PCB_HOLES:
-        h = cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(3.5).extrude(-(STACK + 1.2) - SHELL_IN_BACK)
-        h = h.cut(cq.Workplane("XY").workplane(offset=-(STACK + 1.2) - 0.01).center(x, y).circle(PCB_HOLE_HEAD / 2).extrude(1.2 + 0.1))
-        s = s.union(h)
+    # --- bosses that press the display PCB forward against the bezel lip, on bare PCB (see PCB_PRESS)
+    for (x, y) in PCB_PRESS:
+        s = s.union(cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(PCB_PRESS_R).extrude(-STACK - SHELL_IN_BACK))
 
     # --- sensor bosses (heat-set M2 x 4 inserts, M2 x 6 screws): GPS board and IMU
     def boss_h(x, y, h):
         b = cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(BOSS_OD / 2).extrude(h)
         return b.cut(cq.Workplane("XY").workplane(offset=SHELL_IN_BACK - INSERT_DEPTH_INTO_WALL).center(x, y)
                      .circle(INSERT_HOLE / 2).extrude(h + INSERT_DEPTH_INTO_WALL + 0.01))
-    for (hx, hy) in GPS_HOLES:
-        s = s.union(boss_h(GPS_ORIGIN[0] + hx, GPS_ORIGIN[1] + hy, GPS_BOSS_H))
+    for (hx, hy) in GPS_HOLES:      # board rotated 180 degrees: local (x, y) -> device (corner - x, corner - y)
+        s = s.union(boss_h(GPS_CORNER[0] - hx, GPS_CORNER[1] - hy, GPS_BOSS_H))
     for dx in (-1, 1):
         for dy in (-1, 1):
             s = s.union(boss_h(IMU_C[0] + dx * IMU_PITCH / 2, IMU_C[1] + dy * IMU_PITCH / 2, BOSS_H + IMU_STANDOFF))
