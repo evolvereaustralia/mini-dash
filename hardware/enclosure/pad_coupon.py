@@ -15,12 +15,15 @@ c = md.box(-md.SHELL_IN_W / 2, md.SHELL_IN_W / 2, -md.SHELL_IN_H / 2, md.SHELL_I
 for (x, y) in md.PCB_PRESS:
     c = c.union(cq.Workplane("XY").workplane(offset=md.SHELL_IN_BACK).center(x, y).circle(md.PCB_PRESS_R)
                 .extrude(md.PCB_BACK_Z - md.SHELL_IN_BACK))
-# corner posts: L-shaped, 2 mm thick, 12 mm legs, top at the glass front (z = -BEZ_T)
+# corner posts: L-shaped, 12 mm legs, top at the glass front (z = -BEZ_T). Their inner faces sit where the bezel
+# pocket wall sits (glass size + CLR), so they CENTRE the glass exactly as the bezel does; the tray is 5 mm bigger
+# than the glass each way, so without this the display drifts sideways and the pads land between the wrong parts.
+gx, gy = md.POCKET_W / 2, md.POCKET_H / 2
 for sx in (1, -1):
     for sy in (1, -1):
         x0, y0 = sx * md.SHELL_IN_W / 2, sy * md.SHELL_IN_H / 2
-        c = c.union(md.box(x0, x0 - sx * 12, y0, y0 - sy * 2, md.SHELL_IN_BACK, -md.BEZ_T))
-        c = c.union(md.box(x0, x0 - sx * 2, y0, y0 - sy * 12, md.SHELL_IN_BACK, -md.BEZ_T))
+        c = c.union(md.box(x0, sx * gx - sx * 12, y0, sy * gy, md.SHELL_IN_BACK, -md.BEZ_T))
+        c = c.union(md.box(x0, sx * gx, y0, sy * gy - sy * 12, md.SHELL_IN_BACK, -md.BEZ_T))
 out = sys.argv[1] if len(sys.argv) > 1 else "export/"
 cq.exporters.export(c.translate((0, 0, -z_plate)), f"{out}/mini-dash-pad-coupon.stl", tolerance=0.02, angularTolerance=0.1)
 bb = c.val().BoundingBox()
