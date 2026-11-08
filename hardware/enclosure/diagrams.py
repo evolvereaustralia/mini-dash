@@ -37,14 +37,14 @@ floor_y, roof_y = md.SHELL_H / 2, md.SHELL_H / 2 + md.VISOR_CAV
 cav_x = md.SHELL_W / 2 - md.SHELL_T
 ant_z0 = md.SHELL_BACK + md.SHELL_T
 GPS_W, GPS_H = 40.64, 36.8046
-gx0, gy0 = md.GPS_ORIGIN                                # board unrotated: local (lx, ly) -> device (gx0 + lx, gy0 + ly)
-gcx, gcy = gx0 + GPS_W, gy0 + GPS_H
+gcx, gcy = md.GPS_CORNER                                # board rotated 180 degrees: local (lx, ly) -> device (gcx - lx, gcy - ly)
+gx0, gy0 = gcx - GPS_W, gcy - GPS_H                      # device-frame lower-left corner of the board
 def G(lx, ly):
-    return gx0 + lx, gy0 + ly
-JACK_X, JACK_Y = md.GPS_JACK                            # SMA jack axis, pointing +X
-LANE_X1 = JACK_X + 50.0                                 # end of the plug (20) plus the stiff 30 mm of lead
+    return gcx - lx, gcy - ly
+JACK_X, JACK_Y = G(40.41, 25.65)                        # SMA jack axis, pointing -X
+LANE_X0 = JACK_X - 50.0                                 # end of the plug (20) plus the stiff 30 mm of lead
 gps_z = md.SHELL_IN_BACK + md.GPS_BOSS_H               # board underside
-imu_z = md.SHELL_IN_BACK + md.IMU_BOSS_H
+imu_z = md.SHELL_IN_BACK + md.BOSS_H + md.IMU_STANDOFF
 IMU_HALF = 25.4 / 2
 lz = md.VISOR_FWD - md.LIGHT_FWD
 light_bz = lz - md.LIGHT_BOARD_W / 2 + 2.5
@@ -111,7 +111,7 @@ def fig_tray():
     rect(ax, -cav_x, cav_x, floor_y, roof_y, fc='#eef7ee', ec='k', lw=0.8, hatch='////', alpha=0.6)
     # back-plate vent slots
     for x in (40, 44, 48, 52, 56):
-        rect(ax, x - 1, x + 1, -36, -26, fc='white', ec='k', lw=0.5)
+        rect(ax, x - 1, x + 1, 2, 22, fc='white', ec='k', lw=0.5)
     for x in (-36, -40, -44, -48, -52):
         rect(ax, x - 1, x + 1, -36, -26, fc='white', ec='k', lw=0.5)
     # end-wall vents
@@ -148,13 +148,13 @@ def fig_tray():
     for (hx, hy) in md.GPS_HOLES:
         ax.add_patch(Circle(G(hx, hy), md.BOSS_OD / 2, fc='white', ec='k', lw=0.6))
         ax.add_patch(Circle(G(hx, hy), 1.3, fc='#333', ec='none'))
-    rect(ax, gx0 + 14.2, gx0 + 26.4, gy0 + 8.2, gy0 + 24.2, fc='#1e88e5', ec='k', lw=0.5)    # NEO-M9N module
-    rect(ax, gcx - 9.5, gcx + 3.2, JACK_Y - 3.2, JACK_Y + 3.2, fc='#555', ec='k', lw=0.5)      # SMA jack body, pointing +X
-    rect(ax, gcx + 3.2, gcx + 3.2 + 20, JACK_Y - 3.95, JACK_Y + 3.95, fc='#888', ec='k', lw=0.5)   # SMA plug
-    rect(ax, gcx + 3.2 + 20, LANE_X1, JACK_Y - 1.5, JACK_Y + 1.5, fc='#aaa', ec='k', lw=0.5)  # 30 mm stiff section of the lead
-    rect(ax, gx0 + 35.69 - 3, gcx, gy0 + 15.6 - 3, gy0 + 15.6 + 3, fc='#fff', ec='k', lw=0.5)  # J4 Qwiic, faces +X
-    rect(ax, gx0, gx0 + 5.08 + 3, gy0 + 15.6 - 3, gy0 + 15.6 + 3, fc='#fff', ec='k', lw=0.5)   # J2 Qwiic, faces the left wall
-    rect(ax, gx0 + 10.5 - 4.5, gx0 + 10.5 + 4.5, gcy - 7, gcy, fc='#fff', ec='k', lw=0.5)      # USB-C, top edge
+    rect(ax, gcx - 26.4, gcx - 14.2, gcy - 24.2, gcy - 8.2, fc='#1e88e5', ec='k', lw=0.5)    # NEO-M9N module
+    rect(ax, gx0, gx0 + 9.5, JACK_Y - 3.2, JACK_Y + 3.2, fc='#555', ec='k', lw=0.5)           # SMA jack body, pointing -X
+    rect(ax, gx0 - 20, gx0, JACK_Y - 3.95, JACK_Y + 3.95, fc='#888', ec='k', lw=0.5)          # SMA plug
+    rect(ax, LANE_X0, gx0 - 20, JACK_Y - 1.5, JACK_Y + 1.5, fc='#aaa', ec='k', lw=0.5)        # 30 mm stiff section of the lead
+    rect(ax, gx0, gcx - 35.69 + 3, gcy - 15.6 - 3, gcy - 15.6 + 3, fc='#fff', ec='k', lw=0.5)  # J4 Qwiic, faces -X
+    rect(ax, gcx - 5.08 - 3, gcx, gcy - 15.6 - 3, gcy - 15.6 + 3, fc='#fff', ec='k', lw=0.5)  # J2 Qwiic, faces +X
+    rect(ax, gcx - 10.5 - 4.5, gcx - 10.5 + 4.5, gy0, gy0 + 7, fc='#fff', ec='k', lw=0.5)      # USB-C, bottom edge
     # IMU board
     ix, iy = md.IMU_C
     rect(ax, ix - IMU_HALF, ix + IMU_HALF, iy - IMU_HALF, iy + IMU_HALF, fc=C_IMU, ec='k', lw=1.0, alpha=0.9)
@@ -162,29 +162,29 @@ def fig_tray():
         for dy in (-1, 1):
             ax.add_patch(Circle((ix + dx * md.IMU_PITCH / 2, iy + dy * md.IMU_PITCH / 2), md.BOSS_OD / 2, fc='white', ec='k', lw=0.6))
             ax.add_patch(Circle((ix + dx * md.IMU_PITCH / 2, iy + dy * md.IMU_PITCH / 2), 1.3, fc='#333', ec='none'))
-    rect(ax, ix - 1.25, ix + 1.25, iy - 1.5, iy + 1.5, fc='#333', ec='none')
-    rect(ax, ix - 3, ix + 3, iy - IMU_HALF, iy - IMU_HALF + 7.5, fc='#fff', ec='k', lw=0.5)    # Qwiic ports face down and up
-    rect(ax, ix - 3, ix + 3, iy + IMU_HALF - 7.5, iy + IMU_HALF, fc='#fff', ec='k', lw=0.5)
+    rect(ax, ix - 1.5, ix + 1.5, iy - 1.25, iy + 1.25, fc='#333', ec='none')
+    rect(ax, ix - IMU_HALF, ix - IMU_HALF + 7.5, iy - 3, iy + 3, fc='#fff', ec='k', lw=0.5)
+    rect(ax, ix + IMU_HALF - 7.5, ix + IMU_HALF, iy - 3, iy + 3, fc='#fff', ec='k', lw=0.5)
     # cables
-    # A: header cable from the terminal, right along the bottom, up into the IMU's BOTTOM port
-    ax.plot([-3, 8, ix, ix], [-22, -28, -28, iy - IMU_HALF - 1], color=C_CABLE, lw=2)
-    # 50 mm (or 100 mm): IMU TOP port, left across the top of the display back to GPS J4 (faces +X)
-    ax.plot([ix, ix, 10, gcx + 1], [iy + IMU_HALF + 1, 27, 27, gy0 + 15.6], color=C_CABLE, lw=2)
-    # B: header cable from the terminal, right and up the right side, to the Qwiic notch and into the visor
-    ax.plot([6, 20, 55, 55, md.QWIIC_NOTCH_X, md.QWIIC_NOTCH_X], [-22, -31, -31, 44, 44, 48], color=C_CABLE, lw=2, ls=(0, (4, 2)))
-    # coax: from the coax notch down to the end of the stiff section
-    ax.plot([md.COAX_NOTCH_X, md.COAX_NOTCH_X, LANE_X1 - 3, LANE_X1], [48, 44, JACK_Y + 3, JACK_Y], color=C_COAX, lw=1.6)
+    # A: header cable from the terminal, down and round the -X side, to the IMU LEFT port
+    ax.plot([-3, -16, -55, -55, ix - IMU_HALF - 1], [-22, -32, -32, iy, iy], color=C_CABLE, lw=2)
+    # 50 mm: GPS J4 (faces -X) to the IMU RIGHT port
+    ax.plot([gx0 - 1, 0, -12, ix + IMU_HALF + 1], [gcy - 15.6, 15, iy, iy], color=C_CABLE, lw=2)
+    # B: header cable from the terminal, right and up over the GPS board, to the Qwiic notch and into the visor
+    ax.plot([6, 20, 33, 33, md.QWIIC_NOTCH_X, md.QWIIC_NOTCH_X], [-22, -28, -28, 33, 38, 44], color=C_CABLE, lw=2, ls=(0, (4, 2)))
+    # coax: from the coax notch down across the IMU board to the start of the stiff section
+    ax.plot([md.COAX_NOTCH_X, md.COAX_NOTCH_X, LANE_X0 + 3, LANE_X0], [44, 38, JACK_Y + 4, JACK_Y], color=C_COAX, lw=1.6)
     # terminal wiring points
     ax.plot([-3, 0, 3, 6], [-18, -18, -18, -18], 'o', color=C_CABLE, ms=4)
 
     # labels: left column (right-aligned at x = -70), right column (left-aligned at x = 70), top and bottom rows
     L, R = -70, 70
     label(ax, 'Visor cavity above the tray: antenna, light sensor\nand slide-in cover (see the plan view)', (-50, 47), (L, 50), ha='right')
-    label(ax, 'GPS NEO-M9N board, left half, components toward the display,\nfour M2 x 3 inserts in 2 mm bosses, M2 x 4 screws. Its top edge\nis 0.45 mm under the top wall; J2 (left) faces the wall, unused.',
-          (gx0 + 10, gy0 + 32), (L, 36), ha='right')
-    label(ax, 'Antenna lead: plug (dark grey, 20 mm) and the 30 mm STIFF section\nbeside it run dead straight along y = 37, in the band between the\ndisplay board edge (y 33) and the bezel wall (y 46.5); nothing may\nsit under the display back here because the plug is 7.9 mm across',
-          (JACK_X + 14, JACK_Y + 3.9), (L, 22), ha='right')
-    label(ax, 'Cable A: 150 mm Qwiic-to-header cable, terminal\nalong the bottom to the IMU bottom port', (ix - 3, -27), (L, 10), ha='right')
+    label(ax, 'IMU ISM330DHCX, upper left, components toward the display,\nfour M2 inserts in 5 mm bosses. Qwiic ports face left and right.\nThe antenna lead (grey) crosses it between the two ports.',
+          (ix - 8, iy + 12), (L, 36), ha='right')
+    label(ax, 'Cable A: 150 mm Qwiic-to-header cable, terminal\nround the left side to the IMU left port', (-55, 0), (L, 22), ha='right')
+    label(ax, 'Antenna lead: plug (dark grey, 20 mm) and the 30 mm STIFF\nsection beside it run dead straight along y = 4 under bare\nPCB; only the flexible part beyond x = -42 bends',
+          (LANE_X0 + 8, JACK_Y - 1.5), (L, 10), ha='right')
     label(ax, 'Grey blocks: parts on the BACK of the display board\n(screw terminal 7 mm deep, USB-C, DC in, TF slot, ESP32\nmodule, FPC, switches). Sensor parts must clear them.',
           (-49, -10), (L, -4), ha='right')
     label(ax, 'SMA knockout, future external antenna', (-60, -25), (L, -18), ha='right')
@@ -194,17 +194,16 @@ def fig_tray():
     label(ax, 'Dovetail rail on the outside of the bottom wall,\nflush with the shell back', (-20, y_out - 2.2), (L, -54), ha='right')
     label(ax, 'Display board (dashed outline): pressed forward against the bezel lip by four\n5 mm pads (green discs) on BARE PCB, placed from the STEP to miss every part on\nits back and the corner standoffs (dotted). No screws into the display board.',
           (md.PCB_PRESS[3][0], md.PCB_PRESS[3][1]), (R, 50), ha='left')
-    label(ax, 'Grey blocks are now drawn 2 mm deeper than in drafts up to 2.6 (the glass sits\nbehind the 2 mm bezel plate); only 10.8 mm separates the shell back from the PCB back',
-          (-20, -8), (-30, -58), ha='left')
-    label(ax, 'IMU ISM330DHCX on the right under the TF slot, rotated 90 degrees so its\nQwiic ports face up and down; components toward the display; four M2 x 3\ninserts in 2.5 mm bosses, M2 x 4 screws. Board X is now the device Y axis.',
-          (ix + 8, iy + 10), (R, 36), ha='left')
-    label(ax, 'IMU top port to GPS J4: 50 mm Qwiic cable (48 mm needed; use a 100 mm\none from the elechawk kit if the 50 mm will not reach)', (10, 27), (R, 24), ha='left')
-    label(ax, 'USB-C notch, open at the bezel seam', (60, md.USBC_Y), (R, 6), ha='left')
-    label(ax, 'Cable B (dashed): second 150 mm Qwiic-to-header cable, terminal, along the\nbottom and up the right side, through the Qwiic notch to the light sensor', (55, -10), (R, -8), ha='left')
+    label(ax, 'GPS NEO-M9N board, right half, rotated so its SMA jack points LEFT;\ncomponents toward the display; four M2 x 3 inserts in 2 mm bosses.\nIt sits low so the jack, plug and lead run under the display back.',
+          (gcx - 6, gcy - 3), (R, 36), ha='left')
+    label(ax, 'GPS Qwiic J2 (spare) faces the right wall', (gcx, gcy - 15.6), (R, 24), ha='left')
+    label(ax, '50 mm Qwiic cable, GPS J4 to the IMU right port', (-6, 15), (R, 14), ha='left')
+    label(ax, 'USB-C notch, open at the bezel seam', (60, md.USBC_Y), (R, 4), ha='left')
+    label(ax, 'Cable B (dashed): second 150 mm Qwiic-to-header cable, terminal,\nup over the GPS board, through the Qwiic notch to the light sensor', (33, -10), (R, -8), ha='left')
     label(ax, 'Snap windows: the bezel fingers click in here\n(two on top, two underneath)', (35, -41.5), (R, -24), ha='left')
     label(ax, 'Display press pad, one of four', (36, -21), (R, -36), ha='left')
-    label(ax, 'Coax notch (10 mm, x = 21) and Qwiic notch (8 mm, x = 40) through the top wall into the visor,\nchevron tops. Both sit BEHIND the bezel pocket wall (z -22 to -13.5), where the tray is open to the floor.',
-          (md.COAX_NOTCH_X, 41), (-30, 58), ha='left')
+    label(ax, 'Coax notch (10 mm, x = -21) and Qwiic notch (8 mm, x = 22) through the top wall into the visor,\nchevron tops. Both sit BEHIND the bezel pocket wall (z -22 to -13.5), where the tray is open to the floor.',
+          (md.QWIIC_NOTCH_X, 41), (-20, 58), ha='left')
     ax.set_xlim(-150, 150); ax.set_ylim(-62, 62); ax.set_aspect('equal'); ax.axis('off')
     ax.set_title('Mini Dash shell, looking in from the front with the display removed (device frame, mm; X right, Y up)', fontsize=12)
     fig.tight_layout(); fig.savefig(f'{OUT}/mini-dash-layout-1-tray.png', dpi=110); plt.close(fig)
@@ -221,7 +220,7 @@ def fig_visor():
     rect(ax, -cav_x, cav_x, ant_z0, md.VISOR_FWD, fc='#eef7ee', ec='k', lw=0.8)          # cavity (open at the front)
     rect(ax, -cav_x, cav_x, md.VISOR_FWD - 0.01, md.VISOR_FWD + 0.6, fc='#eef7ee', ec='none')  # open front
     # antenna pocket: side ribs and gabled stop rib
-    for sx, zend in ((-1, ant_z0 + md.ANT_D + 2), (1, md.SIDE_RIB_GAP_Z)):
+    for sx, zend in ((1, ant_z0 + md.ANT_D + 2), (-1, md.SIDE_RIB_GAP_Z)):
         rect(ax, sx * (md.ANT_W / 2 + 1) - 1, sx * (md.ANT_W / 2 + 1) + 1, md.SHELL_BACK, zend, fc=C_SHELL, ec='k', lw=0.8)
     rect(ax, -md.ANT_W / 2 - 2, md.ANT_W / 2 + 2, ant_z0 + md.ANT_D, ant_z0 + md.ANT_D + 2, fc=C_SHELL, ec='k', lw=0.8, hatch='xx')
     # antenna on its pad
@@ -232,7 +231,7 @@ def fig_visor():
     rect(ax, md.COAX_NOTCH_X - 5, md.COAX_NOTCH_X + 5, md.NOTCH_Z0, md.NOTCH_Z1, fc='white', ec='k', lw=0.8)
     rect(ax, md.QWIIC_NOTCH_X - 4, md.QWIIC_NOTCH_X + 4, md.NOTCH_Z0, md.NOTCH_Z1, fc='white', ec='k', lw=0.8)
     # antenna lead: out of the front-left corner of the pocket (the -X rib stops at z -3), back along the floor, down the notch
-    ax.plot([0, 11, 15.5, md.COAX_NOTCH_X, md.COAX_NOTCH_X], [ant_z0 + 25.5, ant_z0 + 24, -1, -10, md.NOTCH_Z1 - 2], color=C_COAX, lw=1.6)
+    ax.plot([0, -11, -15.5, md.COAX_NOTCH_X, md.COAX_NOTCH_X], [ant_z0 + 25.5, ant_z0 + 24, -1, -10, md.NOTCH_Z1 - 2], color=C_COAX, lw=1.6)
     # cover grooves and cover
     cz0 = md.VISOR_FWD - 3.0
     rect(ax, -cav_x - 0.8, cav_x + 0.8, cz0, cz0 + md.COVER_T + 2 * md.CLR, fc='white', ec='k', lw=0.6)
@@ -251,7 +250,7 @@ def fig_visor():
     rect(ax, md.LIGHT_X - 2, md.LIGHT_X + 2, lz + md.LIGHT_BOARD_W / 2 - 2.5, lz + md.LIGHT_BOARD_W / 2 + 0.5, fc='#333', ec='k', lw=0.5)  # lens
     rect(ax, md.LIGHT_X - md.LIGHT_BOARD_L / 2, md.LIGHT_X - md.LIGHT_BOARD_L / 2 + 6, lz + 3, lz + 9, fc='#fff', ec='k', lw=0.5)   # STEMMA ports
     rect(ax, md.LIGHT_X + md.LIGHT_BOARD_L / 2 - 6, md.LIGHT_X + md.LIGHT_BOARD_L / 2, lz + 3, lz + 9, fc='#fff', ec='k', lw=0.5)
-    ax.plot([md.QWIIC_NOTCH_X, md.QWIIC_NOTCH_X, 33, 28.5], [md.NOTCH_Z1 - 2, 4, 10, lz + 6], color=C_CABLE, lw=2, ls=(0, (4, 2)))
+    ax.plot([md.QWIIC_NOTCH_X, md.QWIIC_NOTCH_X, 26, 28.5], [md.NOTCH_Z1 - 2, 8, 12, lz + 6], color=C_CABLE, lw=2, ls=(0, (4, 2)))
     # roof hole note: the roof is above everything here
     ax.annotate('', xy=(-70, 36), xytext=(-70, 28), arrowprops=dict(arrowstyle='->'))
     ax.text(-70, 38, 'toward the driver (+Z)', fontsize=8.5, va='bottom', ha='center')
@@ -259,14 +258,14 @@ def fig_visor():
     L, R = -66, 66
     label(ax, 'GPS patch antenna, 25 x 25 x 8.2 mm, stuck to the visor floor with\nits own 3M pad and boxed in by the back wall, two side ribs and the\nstop rib. Looks up through the 2 mm roof, 0.6 mm below it.',
           (-8, ant_z0 + 8), (L, -12), ha='right')
-    label(ax, 'Side ribs, floor to roof; the right one stops at z = -3\nso the lead can leave the pocket at its front corner', (-14, ant_z0 + 10), (L, 2), ha='right')
+    label(ax, 'Side ribs, floor to roof; the left one stops at z = -3\nso the lead can leave the pocket at its front corner', (-14, ant_z0 + 10), (L, 2), ha='right')
     label(ax, 'Stop rib, gabled underside so it is not a bridge', (-10, ant_z0 + md.ANT_D + 1), (L, 10), ha='right')
     label(ax, 'Coax notch, 10 x 8.5 (chevron top), behind the bezel wall:\nthe plug and the 30 mm stiff lead are fed down through it\nat an angle, then the lead runs back along the floor', (md.COAX_NOTCH_X - 5, md.NOTCH_Z0 + 4), (L, 20), ha='right')
     label(ax, 'Tray below (dotted outline): display, GPS, IMU', (-50, -20), (L, -26), ha='right')
     label(ax, 'Open front of the visor, closed by the cover', (-30, md.VISOR_FWD + 0.3), (-30, 40), ha='center')
     label(ax, 'Light sensor VEML7700 board, flat under the roof against two bosses\n(each with a web down to the back wall). Two M2 x 12 screws go down\nthrough the roof (counterbored heads on top) and the boss, nut under\nthe board. Lens on its front edge faces the slot in the cover.',
           (md.LIGHT_X + 10, lz), (R, 14), ha='left')
-    label(ax, 'Qwiic notch: cable B comes up here, behind the\nbezel wall, between the light sensor boss webs', (md.QWIIC_NOTCH_X + 4, md.NOTCH_Z0 + 4), (R, -2), ha='left')
+    label(ax, 'Qwiic notch: cable B comes up here, behind the\nbezel wall, between the side rib and the light sensor', (md.QWIIC_NOTCH_X + 4, md.NOTCH_Z0 + 4), (R, -2), ha='left')
     label(ax, 'Lens slot, 7 x 3.5, in the cover', (md.LIGHT_X + 3.5, cz0 + 1.5), (R, 40), ha='left')
     label(ax, '1 mm cover slides in from the right along grooves in roof\nand floor, through a slot in the right wall; finger notch to pull it',
           (md.SHELL_W / 2 - 1, cz0 + 1), (R, 28), ha='left')
@@ -300,9 +299,9 @@ def draw_poly(ax, poly, **kw):
 
 def fig_sections():
     meshes = {n: trimesh.load(f'{S}/dev/{n}.stl') for n in ('shell', 'bezel', 'cover', 'plate', 'board43c')}
-    stations = [(-35, 'x = -35: GPS board, low on 2 mm bosses'), (-10, 'x = -10: SMA plug in the band above the display board'),
-                (0, 'x = 0: antenna pocket, terminal block, rail'), (md.COAX_NOTCH_X, f'x = {md.COAX_NOTCH_X:.0f}: coax notch behind the bezel wall, stiff lead'),
-                (md.IMU_C[0], f'x = {md.IMU_C[0]:.0f}: IMU under the TF slot, press pad, Qwiic notch'), (52.15, 'x = 52: light sensor boss, roof screw hole, cover slot')]
+    stations = [(md.IMU_C[0], f'x = {md.IMU_C[0]:.0f}: IMU and the antenna lead lane'), (md.COAX_NOTCH_X, f'x = {md.COAX_NOTCH_X:.0f}: coax notch behind the bezel wall'),
+                (0, 'x = 0: antenna pocket, terminal block, rail'), (30, 'x = 30: GPS board, low on 2 mm bosses'),
+                (42, 'x = 42: light sensor, roof screw holes, cover slot'), (51, 'x = 51: display press pad at the PCB edge')]
     fig, axs = plt.subplots(2, 3, figsize=(24, 13))
     for ax, (x, title) in zip(axs.flat, stations):
         draw_poly(ax, xsec(meshes['plate'], x), color=C_PLATE)
@@ -310,17 +309,17 @@ def fig_sections():
         draw_poly(ax, xsec(meshes['board43c'], x), color='#9e9e9e')
         draw_poly(ax, xsec(meshes['bezel'], x), color='#546e7a')
         draw_poly(ax, xsec(meshes['cover'], x), color='#7cb342')
-        if x == -35:
+        if x == 30:
             rect(ax, gps_z, gps_z + 1.6, gy0, gcy, fc=C_GPS, ec='k', lw=0.8)
-            rect(ax, gps_z + 1.6, gps_z + 1.6 + 2.4, gy0 + 8.2, gy0 + 24.2, fc='#1e88e5', ec='k', lw=0.5)
+            rect(ax, gps_z + 1.6, gps_z + 1.6 + 2.4, gcy - 24.2, gcy - 8.2, fc='#1e88e5', ec='k', lw=0.5)
             label(ax, 'GPS board on 2 mm bosses,\ncomponents toward the display', (gps_z + 1, gcy - 3), (-44, 60), ha='left')
-        if x == -10:
-            ax.add_patch(Circle((gps_z + 1.6 + 3.17, JACK_Y), 3.95, fc='#888', ec='k', lw=0.5))
-            label(ax, 'SMA plug, 7.9 mm: its top is level with the\ndisplay PCB back, so it runs beside the PCB,\n0.3 mm above its top edge', (gps_z + 1.6 + 3.17, JACK_Y + 4), (-44, 62), ha='left')
+            label(ax, 'ESP32 module on the display back', (-12, 18), (-44, -58), ha='left')
         if x == md.COAX_NOTCH_X:
-            ax.add_patch(Circle((gps_z + 1.6 + 3.17, JACK_Y), 1.5, fc='#aaa', ec='k', lw=0.5))
-            label(ax, 'stiff lead', (gps_z + 1.6 + 3.17, JACK_Y + 1.5), (-44, 60), ha='left')
+            ax.add_patch(Circle((gps_z + 1.6 + 3.17, JACK_Y), 3.95, fc='#888', ec='k', lw=0.5))
+            label(ax, 'SMA plug, 7.9 mm, 1.5 mm behind the display back', (gps_z + 1.6 + 3.17, JACK_Y + 3.9), (-44, 60), ha='left')
             label(ax, 'coax notch through the floor,\nbehind the bezel wall', (md.NOTCH_Z0 + 4, floor_y - 1), (8, 40), ha='left')
+        if x == 51:
+            label(ax, 'press pad, 3.5 mm on the PCB edge', (-14, 31), (-44, 60), ha='left')
         if x == 0:
             rect(ax, ant_z0 + 0.5, ant_z0 + 25.5, floor_y, floor_y + 0.9, fc='#333', ec='none')
             rect(ax, ant_z0 + 0.5, ant_z0 + 25.5, floor_y + 0.9, floor_y + 0.9 + 8.2, fc=C_ANT, ec='k', lw=0.8)
@@ -330,16 +329,15 @@ def fig_sections():
             label(ax, 'gabled stop rib', (6, floor_y + 4.85), (14, 62), ha='left')
         if x == md.IMU_C[0]:
             rect(ax, imu_z, imu_z + 1.57, md.IMU_C[1] - IMU_HALF, md.IMU_C[1] + IMU_HALF, fc=C_IMU, ec='k', lw=0.8)
-            for sy in (-1, 1):
-                rect(ax, imu_z + 1.57, imu_z + 1.57 + 3.1, md.IMU_C[1] + sy * IMU_HALF, md.IMU_C[1] + sy * (IMU_HALF - 6), fc='#eee', ec='k', lw=0.5)
-            label(ax, 'IMU on 2.5 mm bosses, components toward the display,\nQwiic ports (white) on its top and bottom edges', (imu_z + 1, md.IMU_C[1]), (-44, 60), ha='left')
-            label(ax, 'TF card slot on the display back', (-13, 15), (-44, -58), ha='left')
-            label(ax, 'press pad on bare PCB', (-14, 30), (6, 50), ha='left')
-        if x == 52.15:
+            ax.add_patch(Circle((gps_z + 1.6 + 3.17, JACK_Y), 1.5, fc='#aaa', ec='k', lw=0.5))
+            label(ax, 'IMU on 5 mm bosses, components toward the display\n(its Qwiic ports are off this section, at x = -46 and -20)', (imu_z + 1, md.IMU_C[1]), (-44, 60), ha='left')
+            label(ax, 'antenna lead, stiff section, below the IMU', (-16.2, JACK_Y - 1.5), (-44, -40), ha='left')
+        if x == 42:
             rect(ax, lz - md.LIGHT_BOARD_W / 2, lz + md.LIGHT_BOARD_W / 2, roof_y - 4 - 1.57, roof_y - 4, fc=C_LIGHT, ec='k', lw=0.8)
+            rect(ax, lz + md.LIGHT_BOARD_W / 2 - 2.5, lz + md.LIGHT_BOARD_W / 2 + 0.5, roof_y - 4 - 1.57 - 1.6, roof_y - 4 - 1.57, fc='#333', ec='k', lw=0.5)
             label(ax, 'light sensor board against the boss ends, 4 mm below the roof,\nheld by M2 x 12 screws down through the roof; lens looks forward',
                   (lz, roof_y - 4.8), (-44, 62), ha='left')
-            label(ax, 'screw hole and counterbore through the roof and boss', (light_bz, roof_y + 1), (-44, -58), ha='left')
+            label(ax, 'TF card slot on the display back', (-11, 15), (-44, -58), ha='left')
         ax.axhline(y_out, color='k', lw=0.3, ls=':')
         ax.set_aspect('equal'); ax.set_xlim(-46, 36); ax.set_ylim(-68, 68)
         ax.set_title(title, fontsize=10); ax.set_xlabel('Z, toward the driver (mm)'); ax.set_ylabel('Y, up (mm)')
@@ -377,12 +375,12 @@ def fig_exploded():
     add_stl(f'{S}/dev/cover.stl', hexc('#558b2f'), (EXP_COVER, 0, 0))
     add_stl(f'{S}/dev/plate.stl', hexc('#b0bec5'), (0, EXP_PLATE, 0))
     add_box(gx0, gcx, gy0, gcy, gps_z, gps_z + 1.6, hexc('#42a5f5'), (0, 0, EXP_SENS))
-    add_box(gx0 + 14.2, gx0 + 26.4, gy0 + 8.2, gy0 + 24.2, gps_z + 1.6, gps_z + 4.0, hexc('#1565c0'), (0, 0, EXP_SENS))
-    add_box(gcx - 9.5, gcx + 8, JACK_Y - 3.2, JACK_Y + 3.2, gps_z + 1.6, gps_z + 8.0, hexc('#333333'), (0, 0, EXP_SENS))
+    add_box(gcx - 26.4, gcx - 14.2, gcy - 24.2, gcy - 8.2, gps_z + 1.6, gps_z + 4.0, hexc('#1565c0'), (0, 0, EXP_SENS))
+    add_box(gx0 - 8, gx0 + 9.5, JACK_Y - 3.2, JACK_Y + 3.2, gps_z + 1.6, gps_z + 8.0, hexc('#333333'), (0, 0, EXP_SENS))
     ix, iy = md.IMU_C
     add_box(ix - IMU_HALF, ix + IMU_HALF, iy - IMU_HALF, iy + IMU_HALF, imu_z, imu_z + 1.57, hexc('#ffa726'), (0, 0, EXP_SENS))
-    for sy in (-1, 1):
-        add_box(ix - 3, ix + 3, iy + sy * IMU_HALF, iy + sy * (IMU_HALF - 7.5), imu_z + 1.57, imu_z + 1.57 + 3.1, hexc('#eeeeee'), (0, 0, EXP_SENS))
+    for sx in (-1, 1):
+        add_box(ix + sx * IMU_HALF, ix + sx * (IMU_HALF - 7.5), iy - 3, iy + 3, imu_z + 1.57, imu_z + 1.57 + 3.1, hexc('#eeeeee'), (0, 0, EXP_SENS))
     add_box(-12.5, 12.5, floor_y, floor_y + 0.9, ant_z0 + 0.5, ant_z0 + 25.5, hexc('#333333'), (0, EXP_ANT, 0))
     add_box(-12.5, 12.5, floor_y + 0.9, floor_y + 9.1, ant_z0 + 0.5, ant_z0 + 25.5, hexc('#26a69a'), (0, EXP_ANT, 0))
     add_box(md.LIGHT_X - md.LIGHT_BOARD_L / 2, md.LIGHT_X + md.LIGHT_BOARD_L / 2, roof_y - 4 - 1.57, roof_y - 4,
@@ -394,7 +392,7 @@ def fig_exploded():
     w2i = vtk.vtkWindowToImageFilter(); w2i.SetInput(win); w2i.Update()
     pw = vtk.vtkPNGWriter(); pw.SetFileName(f'{S}/exploded_raw.png'); pw.SetInputConnection(w2i.GetOutputPort()); pw.Write()
     anchors = {'bezel': (0, 45, EXP_BEZ - 6), 'display': (0, 40, EXP_BOARD - 3), 'shell': (62, -30, -14),
-               'cover': (EXP_COVER + 50, 47, 28), 'plate': (40, EXP_PLATE - 50, -20), 'gps': (gx0 + 20, gcy - 6, gps_z + EXP_SENS),
+               'cover': (EXP_COVER + 50, 47, 28), 'plate': (40, EXP_PLATE - 50, -20), 'gps': (gcx - 20, gcy - 6, gps_z + EXP_SENS),
                'imu': (ix, iy - 10, imu_z + EXP_SENS), 'antenna': (0, floor_y + 9 + EXP_ANT, ant_z0 + 12),
                'light': (md.LIGHT_X, roof_y - 4, lz + EXP_LIGHT), 'rail': (0, y_out - 2, -20)}
     pts = {}
@@ -405,9 +403,9 @@ def fig_exploded():
         'bezel': ('1. Bezel (printed face down). The display drops into its pocket from behind;\nfour cantilever fingers on its top and bottom walls.', (60, 150)),
         'display': ('2. Waveshare 4.3C display. Not screwed: trapped between the bezel lip\nand four press pads on bare PCB when the shell snaps on.', (60, 420)),
         'shell': ('3. Shell (printed back down) slides over the bezel from behind and clicks\nonto the fingers. Carries every sensor.', (1250, 820)),
-        'gps': ('4. GPS NEO-M9N board, left half: four M2 x 3 heat-set inserts in 2 mm bosses,\ncomponents toward the display, SMA jack pointing right along the top.', (1250, 150)),
-        'imu': ('5. IMU ISM330DHCX, right, ports up and down: four M2 x 3 inserts\nin 2.5 mm bosses, components toward the display.', (1250, 560)),
-        'antenna': ('6. GPS patch antenna: 3M pad onto the visor floor, boxed by ribs. Its lead leaves\nthe pocket at the front-right corner and drops through the coax notch to the SMA jack.', (1250, 30)),
+        'gps': ('4. GPS NEO-M9N board, right half: four M2 x 3 heat-set inserts in 2 mm bosses,\ncomponents toward the display, SMA jack pointing left.', (1250, 150)),
+        'imu': ('5. IMU ISM330DHCX, upper left: four M2 x 4 inserts in 5 mm bosses,\ncomponents toward the display.', (1250, 560)),
+        'antenna': ('6. GPS patch antenna: 3M pad onto the visor floor, boxed by ribs. Its lead leaves\nthe pocket at the front-left corner and drops through the coax notch to the SMA jack.', (1250, 30)),
         'light': ('7. Light sensor: two M2 x 12 screws down through the roof and bosses,\nnuts under the board, lens facing the cover slot.', (60, 620)),
         'cover': ('8. Visor cover slides in from the right along grooves in the\nroof and floor, after the antenna and light sensor are in.', (1250, 430)),
         'plate': ('9. Adhesive plate (3M VHB underneath) with the dovetail groove.\nThe device slides on from the left until the rail hits the groove end.', (60, 1000)),
