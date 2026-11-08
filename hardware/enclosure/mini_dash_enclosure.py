@@ -1,5 +1,5 @@
 """
-Mini Dash enclosure, draft 2.6 (parametric, CadQuery).
+Mini Dash enclosure, draft 2.7 (parametric, CadQuery).
 
 Four printed parts, no supports, no glue:
   1. bezel   : printed FACE DOWN. Plate with the screen window; pocket walls hold the
@@ -18,7 +18,10 @@ less (snap windows, antenna stop rib, vent slots), and no supported overhang ste
 
 Device frame (all three parts are designed in it, then moved to print orientation):
   X = left-right, Y = up (+) / down (-), Z = toward the driver (+) / toward the windscreen (-).
-  Origin = centre of the display glass, Z = 0 at the glass front face.
+  Origin = centre of the display glass, Z = 0 at the BEZEL front face. The bezel plate is BEZ_T thick, so the
+  glass front sits at Z = -BEZ_T and the display PCB back at PCB_BACK_Z = -(BEZ_T + STACK) = -12.2. Drafts up to
+  2.6 placed the display 2 mm too far forward (they took Z = 0 as the glass front); every part on the display
+  back is 2 mm deeper than those drafts assumed, which is why the bezel would not close on the 2.6 shell.
 
 Board facts come from Waveshare's ESP32-S3-Touch-LCD-4.3C-3D.stp and -2D.pdf and SparkFun's
 NEO-M9N SMA .brd. The light sensor and the SparkFun embedded antenna were not measured; their
@@ -33,19 +36,17 @@ WALL = 2.0
 # display board (4.3C)
 GLASS_W, GLASS_H, GLASS_R = 112.4, 75.1, 4.0
 GLASS_CY = -1.94               # glass centre in STEP frame (we re-origin on it)
-STACK = 10.2                   # glass front to PCB back
+STACK = 10.2                   # glass front to PCB back (Waveshare STEP)
 TERM_DEPTH = 17.2              # glass front to the back of the screw-terminal plug
 PCB_HOLES = [(-46, -22 - GLASS_CY), (46, -22 - GLASS_CY), (-46, 28 - GLASS_CY), (46, 28 - GLASS_CY)]   # reference only
-# Display press bosses (draft 2.6): four pads on BARE PCB back, chosen from Waveshare's STEP. They only press the
-# board forward against the bezel lip; the bezel pocket centres the glass. The old bosses at the PCB holes landed
-# on the DC input terminal and let the board sit off-centre. Positions avoid every part on the PCB back, the GPS
-# and IMU boards and the antenna lead's straight run. The two upper ones sit 3.5 to 4 mm inside the PCB's side edges, just outboard of Waveshare's
-# corner standoffs at x +-46 and clear of the IMU's left Qwiic plug and the GPS board's right edge.
-PCB_PRESS = [(-40.0, -21.0), (-50.5, 31.0), (36.0, -21.0), (51.0, 31.0)]
+# Display press pads (draft 2.6, re-placed 2.7): four 5 mm pads on BARE PCB back, chosen from Waveshare's STEP. They
+# only press the board forward against the bezel lip; the bezel pocket centres the glass. Positions avoid every part
+# on the PCB back, the corner standoffs, the GPS and IMU boards, their Qwiic plugs and the antenna lead's straight run.
+PCB_PRESS = [(-40.0, -21.0), (36.0, -21.0), (4.0, 30.0), (40.0, 30.0)]
 PCB_PRESS_R = 2.5
 LCD_CY = -2.4 - GLASS_CY       # active-area centre offset
 WIN_W, WIN_H, WIN_R = 102.0, 61.0, 2.0
-USBC_Y, USBC_Z0, USBC_Z1 = -2.5 - GLASS_CY, 9.4, 13.5   # USB-C receptacle on the +X end
+USBC_Y, USBC_Z0, USBC_Z1 = -2.5 - GLASS_CY, 2.0 + 9.4, 2.0 + 13.5   # USB-C receptacle on the +X end, z 9.4 to 13.5 behind the glass front (= BEZ_T + ...)
 # enclosure
 DEPTH = 25.0                   # bezel front face to shell back face
 BEZ_T = 2.0                    # bezel plate thickness
@@ -60,10 +61,10 @@ VISOR_CAV = ANT_T + ANT_PAD + 0.6                     # 9.7: pad stays on, stick
 LIGHT_X, LIGHT_FWD = 42.0, 14.6                      # board centre (x, forward of the bezel face); front edge 2.7 mm behind the cover
 LIGHT_BOARD_L, LIGHT_BOARD_W, LIGHT_HOLE_PITCH = 25.49, 17.80, 20.3
 LIGHT_SLOT_W, LIGHT_SLOT_D = 7.0, 3.5                 # slot in the cover in front of the lens
-QWIIC_NOTCH_X = 22.0                                  # floor notch for the light sensor's Qwiic cable, outside the antenna pocket
-COAX_NOTCH_X = -21.0                                  # floor notch for the antenna lead, outside the pocket on the -X side
+QWIIC_NOTCH_X = 40.0                                  # floor notch for the light sensor's Qwiic cable, between the light sensor boss webs
+COAX_NOTCH_X = 21.0                                   # floor notch for the antenna lead, just outside the pocket on the +X side
 NOTCH_Z0, NOTCH_Z1 = -22.0, -13.5                     # both notches sit BEHIND the bezel's 13 mm pocket wall (draft 2.6)
-SIDE_RIB_GAP_Z = -3.0                                 # the -X side rib stops here so the antenna lead can leave the pocket
+SIDE_RIB_GAP_Z = -3.0                                 # the +X side rib stops here so the antenna lead can leave the pocket
 LIGHT_SCREW_HOLE = 2.4                                # M2 x 12 clearance through boss and roof; nut under the board, head on top
 LIGHT_HEAD_CBORE, LIGHT_HEAD_DEPTH = 4.2, 1.2         # counterbore for the M2 button head in the roof top
 COVER_T, COVER_GROOVE = 1.0, 0.8                      # slide-in visor cover
@@ -74,19 +75,23 @@ BUMP = 1.0                     # bump projection
 BUMP_Z0, BUMP_Z1 = 10.0, 12.0  # catch face at Z0, ramp from Z1 to wall top
 TOP_CATCH_RISE = 1.0           # top fingers: 45-degree catch so the bezel can be pulled off; bottom fingers: flat catch, released through the windows
 # sensors on the shell back (inside face)
-BOSS_H, BOSS_OD, INSERT_HOLE = 5.0, 6.0, 3.2   # IMU bosses; hole for the kit's M2 x 4 mm inserts (3.5 OD). The CE10192 kit has no M2.5.
-GPS_BOSS_H = 2.0               # GPS board low (M2 x 3 inserts here): its SMA jack, plug and the 30 mm stiff lead run under the display back
-INSERT_DEPTH_INTO_WALL = 1.5   # insert holes run on into the 2 mm back wall so a 4 mm insert seats fully in a 3 mm boss
-# Draft 2.6 layout: the GPS board moved to the RIGHT half, rotated 180 degrees in plane (components still toward the
-# display), so its edge-mount SMA jack points -X and the lead's plug plus 30 mm stiff section (about 50 mm straight)
-# runs left along y = 3.9 under bare PCB (0.8 mm above the connector row's footprint), clear of everything, from x = 7.6 to x = -42 and on to the coax notch in the top wall at x = -21. The IMU moved
-# to the upper left, above that lane. GPS_CORNER is the board's local (40.64, 36.8) corner in the device frame.
-GPS_CORNER = (48.0, 29.5)
+BOSS_OD, INSERT_HOLE = 6.0, 3.2   # sensor bosses; hole for the kit's M2 inserts (3.5 OD). The CE10192 kit has no M2.5.
+BOSS_H = 4.0                   # light sensor bosses (no insert: through-hole for an M2 x 12 screw)
+GPS_BOSS_H = 2.0               # GPS and IMU boards sit low on 2 and 2.5 mm bosses with the kit's M2 x 3 inserts and M2 x 4 screws:
+IMU_BOSS_H = 2.5               # only 10.8 mm separates the shell's inside back (-23) from the display PCB back (-12.2)
+INSERT_DEPTH_INTO_WALL = 1.5   # insert holes run on into the 2 mm back wall so a 3 mm insert seats fully in a 2 mm boss
+# Draft 2.7 layout. The SMA plug on the antenna lead is 7.9 mm across; on a 2 mm boss the GPS board puts the plug's
+# top at z -12.28, level with the display PCB back (-12.2), so the plug and the 30 mm stiff lead beside it CANNOT run
+# under the PCB. They run in the band above the PCB's top edge (y 32.94) and below the bezel pocket wall (y 46.5):
+# GPS board in the LEFT half, unrotated, components toward the display, its edge-mount SMA jack pointing +X at
+# y = GPS_ORIGIN.y + 25.65 = 37.2, plug and stiff lead dead straight from x -12 to x 35 along that line, 0.3 mm
+# above the PCB edge; the board's top edge lands 0.45 mm under the top wall. The IMU sits on the right under the
+# TF slot, rotated 90 degrees so its Qwiic ports face up and down (a plug on a +X port would hit the wall).
+GPS_ORIGIN = (-55.0, 11.55)    # board local origin (its lower-left corner) in the device frame
 GPS_HOLES = [(2.54, 2.54), (38.1, 2.54), (2.54, 34.2646), (38.1, 34.2646)]     # board local, SparkFun brd
-GPS_ORIGIN = (GPS_CORNER[0] - 40.64, GPS_CORNER[1] - 36.8046)                  # board local origin in device frame
-IMU_C = (-33.0, 22.0)          # SparkFun 1x1" ISM330DHCX centre, upper left, above the antenna lead's lane
+GPS_JACK = (GPS_ORIGIN[0] + 40.41, GPS_ORIGIN[1] + 25.65)                      # SMA jack axis, pointing +X
+IMU_C = (41.0, 6.0)            # SparkFun 1x1" ISM330DHCX centre, ports on its +Y and -Y edges
 IMU_PITCH = 20.32              # confirmed from SparkFun brd 24 Oct 2026: 25.4 sq board, holes 2.54 in
-IMU_STANDOFF = 0.0             # components face the display PCB; 5 mm bosses leave 1.4 mm over the Qwiic plugs under the PCB-back parts
 # dovetail (draft 2.4): RAIL on the shell, GROOVE in the plate.
 # A dovetail groove in a face that is vertical in print always has a lip whose underside starts at a knife edge in
 # mid-air (the mouth edge), so the old strip under the shell could not print. A rail whose wide end stands on the
@@ -109,6 +114,7 @@ SHELL_IN_W, SHELL_IN_H = BEZ_W + 2 * CLR, BEZ_H + 2 * CLR
 SHELL_W, SHELL_H = SHELL_IN_W + 2 * SHELL_T, SHELL_IN_H + 2 * SHELL_T
 SHELL_IN_BACK = -(DEPTH - SHELL_T)      # z of the shell's inside back face
 SHELL_BACK = -DEPTH
+PCB_BACK_Z = -(BEZ_T + STACK)           # z of the display PCB's back face: -12.2
 
 
 def rrect(w, h, r, z0, z1, cx=0.0, cy=0.0):
@@ -170,8 +176,8 @@ def make_shell():
     s = s.union(visor)
     # antenna pocket: back wall, two side ribs and a front stop rib (floor to roof, 9.7 mm bridge, four-side anchored)
     ant_z0 = SHELL_BACK + SHELL_T
-    # the -X rib stops short of the front so the antenna lead can leave the pocket at its front-left corner
-    for sx, zend in ((1, ant_z0 + ANT_D + 2.0), (-1, SIDE_RIB_GAP_Z)):
+    # the +X rib stops short of the front so the antenna lead can leave the pocket at its front-right corner
+    for sx, zend in ((-1, ant_z0 + ANT_D + 2.0), (1, SIDE_RIB_GAP_Z)):
         s = s.union(box(sx * (ANT_W / 2 + 1) - 1, sx * (ANT_W / 2 + 1) + 1, floor_y, roof_y, SHELL_BACK, zend))
     # front stop rib floor to roof, 2 mm thick, with a gabled (chevron) section so it climbs from both walls at
     # 45 degrees instead of bridging the 9.7 mm cavity
@@ -251,24 +257,24 @@ def make_shell():
         for y in (-34, -28, 22, 28, 34):
             s = s.cut(box(sx * (SHELL_IN_W / 2 - 1), sx * (SHELL_W / 2 + 1), y - 0.9, y + 0.9, -20.0, -6.0))
     for x in (40, 44, 48, 52, 56):
-        s = s.cut(box(x - 1.0, x + 1.0, 2.0, 22.0, SHELL_BACK - 1, SHELL_IN_BACK + 1))
+        s = s.cut(box(x - 1.0, x + 1.0, -36.0, -26.0, SHELL_BACK - 1, SHELL_IN_BACK + 1))
     for x in (-36, -40, -44, -48, -52):
         s = s.cut(box(x - 1.0, x + 1.0, -36.0, -26.0, SHELL_BACK - 1, SHELL_IN_BACK + 1))
 
     # --- bosses that press the display PCB forward against the bezel lip, on bare PCB (see PCB_PRESS)
     for (x, y) in PCB_PRESS:
-        s = s.union(cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(PCB_PRESS_R).extrude(-STACK - SHELL_IN_BACK))
+        s = s.union(cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(PCB_PRESS_R).extrude(PCB_BACK_Z - SHELL_IN_BACK))
 
     # --- sensor bosses (heat-set M2 x 4 inserts, M2 x 6 screws): GPS board and IMU
     def boss_h(x, y, h):
         b = cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(BOSS_OD / 2).extrude(h)
         return b.cut(cq.Workplane("XY").workplane(offset=SHELL_IN_BACK - INSERT_DEPTH_INTO_WALL).center(x, y)
                      .circle(INSERT_HOLE / 2).extrude(h + INSERT_DEPTH_INTO_WALL + 0.01))
-    for (hx, hy) in GPS_HOLES:      # board rotated 180 degrees: local (x, y) -> device (corner - x, corner - y)
-        s = s.union(boss_h(GPS_CORNER[0] - hx, GPS_CORNER[1] - hy, GPS_BOSS_H))
+    for (hx, hy) in GPS_HOLES:
+        s = s.union(boss_h(GPS_ORIGIN[0] + hx, GPS_ORIGIN[1] + hy, GPS_BOSS_H))
     for dx in (-1, 1):
         for dy in (-1, 1):
-            s = s.union(boss_h(IMU_C[0] + dx * IMU_PITCH / 2, IMU_C[1] + dy * IMU_PITCH / 2, BOSS_H + IMU_STANDOFF))
+            s = s.union(boss_h(IMU_C[0] + dx * IMU_PITCH / 2, IMU_C[1] + dy * IMU_PITCH / 2, IMU_BOSS_H))
 
     # --- dovetail rail under the bottom wall, running along X, wide end (tip) at the back so its lowest corner
     # sits on the bed in print. The rail leans back by RAIL_LEAN_DEG (tip toward the windscreen) so that on a dash
