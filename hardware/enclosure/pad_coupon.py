@@ -1,5 +1,5 @@
 """
-Pad test coupon: the shell's four display press pads on a thin back plate, with a short post at each
+Pad test coupon: the shell's four display press pads (on the corner screw heads) on a thin back plate, with a short post at each
 corner whose top sits where the GLASS FRONT should be (z -2, behind the bezel plate). Drop the display
 in on its own, press it onto the pads, and the glass front should be flush with the four post tops.
 Proud = pads too tall; recessed = pads too short. Prints back down in about half an hour.
@@ -14,7 +14,7 @@ z_plate = md.SHELL_IN_BACK - PLATE_T
 c = md.box(-md.SHELL_IN_W / 2, md.SHELL_IN_W / 2, -md.SHELL_IN_H / 2, md.SHELL_IN_H / 2, z_plate, md.SHELL_IN_BACK)
 for (x, y) in md.PCB_PRESS:
     c = c.union(cq.Workplane("XY").workplane(offset=md.SHELL_IN_BACK).center(x, y).circle(md.PCB_PRESS_R)
-                .extrude(md.PCB_BACK_Z - md.SHELL_IN_BACK))
+                .extrude(md.PCB_BACK_Z - md.SCREW_HEAD_H - md.SHELL_IN_BACK))
 # corner posts: L-shaped, 12 mm legs, top at the glass front (z = -BEZ_T). Their inner faces sit where the bezel
 # pocket wall sits (glass size + CLR), so they CENTRE the glass exactly as the bezel does; the tray is 5 mm bigger
 # than the glass each way, so without this the display drifts sideways and the pads land between the wrong parts.

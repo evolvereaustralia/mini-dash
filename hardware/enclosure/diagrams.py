@@ -129,7 +129,7 @@ def fig_tray():
     rect(ax, md.SHELL_IN_W / 2, md.SHELL_W / 2, md.USBC_Y - 8, md.USBC_Y + 8, fc='white', ec='k', lw=0.6)
     ax.add_patch(Circle((-md.SHELL_W / 2 + md.SHELL_T / 2, -25), 3.3, fc='white', ec='k', lw=0.6))
     # coax notch and Qwiic notch through the top wall
-    rect(ax, md.COAX_NOTCH_X - 5, md.COAX_NOTCH_X + 5, md.SHELL_IN_H / 2, md.SHELL_H / 2, fc='white', ec='k', lw=0.6)
+    rect(ax, md.COAX_NOTCH_X - md.COAX_SLOT_W / 2, md.COAX_NOTCH_X + md.COAX_SLOT_W / 2, md.SHELL_IN_H / 2, md.SHELL_H / 2, fc='white', ec='k', lw=0.6)
     rect(ax, md.QWIIC_NOTCH_X - 4, md.QWIIC_NOTCH_X + 4, md.SHELL_IN_H / 2, md.SHELL_H / 2, fc='white', ec='k', lw=0.6)
     # rail under the bottom wall (behind the wall in this view)
     rect(ax, -md.DT_RAIL_L / 2, md.DT_RAIL_L / 2, y_out, y_out - 4.3, fc=C_SHELL, ec='k', lw=1.0, ls='--')
@@ -143,8 +143,6 @@ def fig_tray():
     # display press pads (on bare PCB) and, dotted, Waveshare's corner standoffs they avoid
     for (x, y) in md.PCB_PRESS:
         ax.add_patch(Circle((x, y), md.PCB_PRESS_R, fc=C_SHELL, ec='k', lw=0.8))
-    for (x, y) in md.PCB_HOLES:
-        ax.add_patch(Circle((x, y), 1.75, fc='none', ec='#616161', lw=0.6, ls=':'))
     # GPS board
     rect(ax, gx0, gcx, gy0, gcy, fc=C_GPS, ec='k', lw=1.0, alpha=0.85)
     for (hx, hy) in md.GPS_HOLES:
@@ -194,7 +192,7 @@ def fig_tray():
     label(ax, '16-pin screw terminal: both header cables land in\nthe same four contacts (SDA, SCL, 3V3, GND). Fit\nthe bottom-entry block so the wires exit downward.',
           (-14, -18), (L, -40), ha='right')
     label(ax, 'Dovetail rail on the outside of the bottom wall,\nflush with the shell back', (-20, y_out - 2.2), (L, -54), ha='right')
-    label(ax, 'Display board (dashed outline): pressed forward against the bezel lip by four\n5 mm pads (green discs) on BARE PCB, placed from the STEP to miss every part on\nits back and the corner standoffs (dotted). No screws into the display board.',
+    label(ax, 'Display board (dashed outline): pressed forward against the bezel lip by four\n4 mm pads (green discs) on its own corner SCREW HEADS. No screws into the display board.',
           (md.PCB_PRESS[3][0], md.PCB_PRESS[3][1]), (R, 50), ha='left')
     label(ax, 'GPS NEO-M9N board, right half, rotated so its SMA jack points LEFT;\ncomponents toward the display; four M2 x 3 inserts in 2 mm bosses.\nIt sits low so the jack, plug and lead run under the display back.',
           (gcx - 6, gcy - 3), (R, 36), ha='left')
@@ -204,7 +202,7 @@ def fig_tray():
     label(ax, 'Cable B (dashed): second 150 mm Qwiic-to-header cable, terminal,\nup over the GPS board, through the Qwiic notch to the light sensor', (33, -10), (R, -8), ha='left')
     label(ax, 'Snap windows: the bezel fingers click in here\n(two on top, two underneath)', (35, -41.5), (R, -24), ha='left')
     label(ax, 'Display press pad, one of four', (36, -21), (R, -36), ha='left')
-    label(ax, 'Coax notch (10 mm, x = -21) and Qwiic notch (8 mm, x = 22) through the top wall into the visor,\nchevron tops. Both sit BEHIND the bezel pocket wall (z -22 to -13.5), where the tray is open to the floor.',
+    label(ax, 'Coax slot (6 mm, x = -21, open to the visor front) and Qwiic notch (8 mm, x = 22, chevron top, behind the\nbezel pocket wall) through the top wall into the visor.',
           (md.QWIIC_NOTCH_X, 41), (-20, 58), ha='left')
     ax.set_xlim(-150, 150); ax.set_ylim(-62, 62); ax.set_aspect('equal'); ax.axis('off')
     ax.set_title('Mini Dash shell, looking in from the front with the display removed (device frame, mm; X right, Y up)', fontsize=12)
@@ -230,7 +228,7 @@ def fig_visor():
     ax.add_patch(Circle((0, ant_z0 + 13), 6, fc='#80cbc4', ec='k', lw=0.5))
     rect(ax, -3, 3, ant_z0 + 20, ant_z0 + 25.5, fc='#555', ec='k', lw=0.5)                   # LNA can / cable exit
     # notch through the floor (seen from above as an opening)
-    rect(ax, md.COAX_NOTCH_X - 5, md.COAX_NOTCH_X + 5, md.NOTCH_Z0, md.NOTCH_Z1, fc='white', ec='k', lw=0.8)
+    rect(ax, md.COAX_NOTCH_X - md.COAX_SLOT_W / 2, md.COAX_NOTCH_X + md.COAX_SLOT_W / 2, md.NOTCH_Z0, md.VISOR_FWD + 0.5, fc='white', ec='k', lw=0.8)
     rect(ax, md.QWIIC_NOTCH_X - 4, md.QWIIC_NOTCH_X + 4, md.NOTCH_Z0, md.NOTCH_Z1, fc='white', ec='k', lw=0.8)
     # antenna lead: out of the front-left corner of the pocket (the -X rib stops at z -3), back along the floor, down the notch
     ax.plot([0, -11, -15.5, md.COAX_NOTCH_X, md.COAX_NOTCH_X], [ant_z0 + 25.5, ant_z0 + 24, -1, -10, md.NOTCH_Z1 - 2], color=C_COAX, lw=1.6)
@@ -262,7 +260,7 @@ def fig_visor():
           (-8, ant_z0 + 8), (L, -12), ha='right')
     label(ax, 'Side ribs, floor to roof; the left one stops at z = -3\nso the lead can leave the pocket at its front corner', (-14, ant_z0 + 10), (L, 2), ha='right')
     label(ax, 'Stop rib, gabled underside so it is not a bridge', (-10, ant_z0 + md.ANT_D + 1), (L, 10), ha='right')
-    label(ax, 'Coax notch, 10 x 8.5 (chevron top), behind the bezel wall:\nthe plug and the 30 mm stiff lead are fed down through it\nat an angle, then the lead runs back along the floor', (md.COAX_NOTCH_X - 5, md.NOTCH_Z0 + 4), (L, 20), ha='right')
+    label(ax, 'Coax SLOT, 6 mm wide, open to the visor front: the flexible lead is\nlaid in from the front and slid back to the tray floor (the rigid plug\ncan never pass through a hole); the bezel wall closes the front part', (md.COAX_NOTCH_X - 3, 10), (L, 20), ha='right')
     label(ax, 'Tray below (dotted outline): display, GPS, IMU', (-50, -20), (L, -26), ha='right')
     label(ax, 'Open front of the visor, closed by the cover', (-30, md.VISOR_FWD + 0.3), (-30, 40), ha='center')
     label(ax, 'Light sensor VEML7700 board, flat under the roof against two bosses\n(each with a web down to the back wall). Two M2 x 12 screws go down\nthrough the roof (counterbored heads on top) and the boss, nut under\nthe board. Lens on its front edge faces the slot in the cover.',

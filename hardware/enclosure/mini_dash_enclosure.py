@@ -1,5 +1,5 @@
 """
-Mini Dash enclosure, draft 2.8 (parametric, CadQuery).
+Mini Dash enclosure, draft 2.9 (parametric, CadQuery).
 
 Four printed parts, no supports, no glue:
   1. bezel   : printed FACE DOWN. Plate with the screen window; pocket walls hold the
@@ -41,20 +41,22 @@ GLASS_CY = -1.94               # glass centre in STEP frame (we re-origin on it)
 STACK = 10.2                   # glass front to PCB back
 TERM_DEPTH = 17.2              # glass front to the back of the screw-terminal plug
 PCB_HOLES = [(-46, -22 - GLASS_CY), (46, -22 - GLASS_CY), (-46, 28 - GLASS_CY), (46, 28 - GLASS_CY)]   # reference only
-# Display press pads (draft 2.6): four pads on BARE PCB back, chosen from Waveshare's STEP, reaching exactly PCB_BACK_Z. They only press the
-# board forward against the bezel lip; the bezel pocket centres the glass. The old bosses at the PCB holes landed
-# on the DC input terminal and let the board sit off-centre. Positions avoid every part on the PCB back, the GPS
-# and IMU boards and the antenna lead's straight run. The two upper ones sit 3.5 to 4 mm inside the PCB's side edges, just outboard of Waveshare's
-# corner standoffs at x +-46 and clear of the IMU's left Qwiic plug and the GPS board's right edge.
-PCB_PRESS = [(-40.0, -21.0), (-50.5, 31.0), (44.5, -20.0), (51.0, 31.0)]
-# (44.5, -20): the touch panel's flex and its GT911 chip fold behind the PCB at about x 31 to 42, y -23 to -8 and are NOT
-# in Waveshare's STEP; the 2.6 to 2.8 pad at (36, -21) landed on that chip (Logan, pad coupon, 8 Nov 2026).
-PCB_PRESS_R = 2.5
+# Display press pads (draft 2.9): four 4 mm pads centred on the display board's four corner mounting screws, pressing on
+# the SCREW HEADS (about 1 mm proud of the PCB back, SCREW_HEAD_H), not on the PCB. The heads sit on the panel's own
+# standoffs, so the load goes straight into the panel frame, and the holes are the one feature whose positions are
+# certain (Waveshare 2D drawing, confirmed on the bezel print and on Logan's back photo of 9 Nov 2026). Drafts 2.6 to
+# 2.8 placed pads on "bare PCB" from Waveshare's STEP, which omits the touch flex and chip, the speaker, the SPK and
+# battery connectors and the PCB notch under the flex; two coupon prints landed on parts. Never place from the STEP.
+PCB_PRESS = list(PCB_HOLES)
+PCB_PRESS_R = 2.0
+SCREW_HEAD_H = 1.0             # screw head / standoff flange proud of the PCB back (STEP: 0.97); the pad coupon measures it
 LCD_CY = -2.4 - GLASS_CY       # active-area centre offset
 WIN_W, WIN_H, WIN_R = 102.0, 61.0, 2.0
 USBC_Y, USBC_Z0, USBC_Z1 = -2.5 - GLASS_CY, 2.0 + 9.4, 2.0 + 13.5   # USB-C receptacle on the +X end, 9.4 to 13.5 behind the glass front (+ BEZ_T)
 # enclosure
-DEPTH = 27.0                   # bezel front face to shell back face (25 in drafts to 2.7; +2 for the glass datum, draft 2.8)
+DEPTH = 31.0                   # bezel front face to shell back face. 25 to draft 2.7; 27 in 2.8 (glass datum); 31 in 2.9 so the 9.1 mm
+                               # hex of the antenna's SMA plug, on a 2 mm GPS boss, keeps 5.5 mm under the PCB and clears the
+                               # optocouplers, speaker and connectors on the display back that the STEP does not show
 BEZ_T = 2.0                    # bezel plate thickness
 BEZ_WALL_H = 13.0              # pocket wall height from the bezel front face
 SHELL_T = 2.0
@@ -69,7 +71,10 @@ LIGHT_BOARD_L, LIGHT_BOARD_W, LIGHT_HOLE_PITCH = 25.49, 17.80, 20.3
 LIGHT_SLOT_W, LIGHT_SLOT_D = 7.0, 3.5                 # slot in the cover in front of the lens
 QWIIC_NOTCH_X = 22.0                                  # floor notch for the light sensor's Qwiic cable, outside the antenna pocket
 COAX_NOTCH_X = -21.0                                  # floor notch for the antenna lead, outside the pocket on the -X side
-NOTCH_Z0, NOTCH_Z1 = -24.0, -13.5                     # both notches sit BEHIND the bezel's 13 mm pocket wall, down to the tray floor
+NOTCH_Z0, NOTCH_Z1 = -(DEPTH - SHELL_T) + 1.0, -13.5  # the Qwiic notch sits BEHIND the bezel's 13 mm pocket wall, down to the tray floor
+COAX_SLOT_W = 6.0                                     # the coax SLOT runs from the tray floor out through the visor's open front: the
+                                                      # plug and its 50 mm rigid section can never be threaded through a hole in the
+                                                      # top wall (Logan, 9 Nov 2026), so the flexible lead is laid in sideways instead
 SIDE_RIB_GAP_Z = -3.0                                 # the -X side rib stops here so the antenna lead can leave the pocket
 LIGHT_SCREW_HOLE = 2.4                                # M2 x 12 clearance through boss and roof; nut under the board, head on top
 LIGHT_HEAD_CBORE, LIGHT_HEAD_DEPTH = 4.2, 1.2         # counterbore for the M2 button head in the roof top
@@ -198,7 +203,11 @@ def make_shell():
         return (cq.Workplane("XZ").workplane(offset=-(floor_y + 0.01)).center(xc, 0)
                 .polyline([(-hw, NOTCH_Z0), (hw, NOTCH_Z0), (hw, NOTCH_Z1), (0, NOTCH_Z1 + hw), (-hw, NOTCH_Z1)]).close()
                 .extrude(SHELL_T + 1.02))
-    s = s.cut(notch(COAX_NOTCH_X, 5.0)).cut(notch(QWIIC_NOTCH_X, 4.0))
+    s = s.cut(notch(QWIIC_NOTCH_X, 4.0))
+    # coax slot: open-ended toward the visor front so the lead drops in from the front and slides back to the tray floor;
+    # the bezel pocket wall closes the front part of it (z > -13) once the bezel is on
+    s = s.cut(cq.Workplane("XZ").workplane(offset=-(floor_y + 0.01)).center(COAX_NOTCH_X, (NOTCH_Z0 + VISOR_FWD + 1) / 2)
+             .rect(COAX_SLOT_W, VISOR_FWD + 1 - NOTCH_Z0).extrude(SHELL_T + 1.02))
     # cover grooves in roof and floor, and the entry slot through the +X side wall
     # Grooves are cut with a 45-degree front face (trapezoid section) so the wall above them is never a flat
     # overhang: a square groove 119 mm long reads to the slicer as a 119 mm bridge. The side-wall entry slot gets
@@ -265,7 +274,7 @@ def make_shell():
 
     # --- bosses that press the display PCB forward against the bezel lip, on bare PCB (see PCB_PRESS)
     for (x, y) in PCB_PRESS:
-        s = s.union(cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(PCB_PRESS_R).extrude(PCB_BACK_Z - SHELL_IN_BACK))
+        s = s.union(cq.Workplane("XY").workplane(offset=SHELL_IN_BACK).center(x, y).circle(PCB_PRESS_R).extrude(PCB_BACK_Z - SCREW_HEAD_H - SHELL_IN_BACK))
 
     # --- sensor bosses (heat-set M2 x 4 inserts, M2 x 6 screws): GPS board and IMU
     def boss_h(x, y, h):
