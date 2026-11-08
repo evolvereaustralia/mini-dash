@@ -46,7 +46,9 @@ PCB_HOLES = [(-46, -22 - GLASS_CY), (46, -22 - GLASS_CY), (-46, 28 - GLASS_CY), 
 # on the DC input terminal and let the board sit off-centre. Positions avoid every part on the PCB back, the GPS
 # and IMU boards and the antenna lead's straight run. The two upper ones sit 3.5 to 4 mm inside the PCB's side edges, just outboard of Waveshare's
 # corner standoffs at x +-46 and clear of the IMU's left Qwiic plug and the GPS board's right edge.
-PCB_PRESS = [(-40.0, -21.0), (-50.5, 31.0), (36.0, -21.0), (51.0, 31.0)]
+PCB_PRESS = [(-40.0, -21.0), (-50.5, 31.0), (44.5, -20.0), (51.0, 31.0)]
+# (44.5, -20): the touch panel's flex and its GT911 chip fold behind the PCB at about x 31 to 42, y -23 to -8 and are NOT
+# in Waveshare's STEP; the 2.6 to 2.8 pad at (36, -21) landed on that chip (Logan, pad coupon, 8 Nov 2026).
 PCB_PRESS_R = 2.5
 LCD_CY = -2.4 - GLASS_CY       # active-area centre offset
 WIN_W, WIN_H, WIN_R = 102.0, 61.0, 2.0

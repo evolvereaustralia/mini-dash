@@ -83,6 +83,8 @@ def build_meshes():
         if b.zmin - GLASS_FRONT_STEP_Z + GLASS_Z < md.PCB_BACK_Z - 0.3 and so.Volume() > 3:     # behind the PCB back face
             back.append((b.zmin - GLASS_FRONT_STEP_Z + GLASS_Z, b.zmax - GLASS_FRONT_STEP_Z + GLASS_Z, b.xmin, b.xmax,
                          b.ymin - md.GLASS_CY, b.ymax - md.GLASS_CY, so.Volume()))
+    # the touch panel's flex and GT911 chip fold behind the PCB here; not in the STEP, seen on the pad coupon 8 Nov 2026
+    back.append((md.PCB_BACK_Z - 1.0, md.PCB_BACK_Z, 31.0, 42.0, -23.0, -8.0, 50.0))
     return back
 
 
