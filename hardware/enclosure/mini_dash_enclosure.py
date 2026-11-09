@@ -86,19 +86,20 @@ BUMP = 1.0                     # bump projection
 BUMP_Z0, BUMP_Z1 = 10.0, 12.0  # catch face at Z0, ramp from Z1 to wall top
 TOP_CATCH_RISE = 1.0           # top fingers: 45-degree catch so the bezel can be pulled off; bottom fingers: flat catch, released through the windows
 # sensors on the shell back (inside face)
-BOSS_H, BOSS_OD, INSERT_HOLE = 5.0, 6.0, 3.2   # IMU bosses; hole for the kit's M2 x 4 mm inserts (3.5 OD). The CE10192 kit has no M2.5.
+BOSS_H, BOSS_OD, INSERT_HOLE = 4.0, 6.0, 3.2   # light-sensor bosses; hole for the kit's M2 inserts (3.5 OD). The CE10192 kit has no M2.5.
+IMU_BOSS_H = 2.5               # IMU low (M2 x 3 inserts, M2 x 4 screws) so its Qwiic plugs clear the SPK connector on the display back
 GPS_BOSS_H = 2.0               # GPS board low (M2 x 3 inserts here): its SMA jack, plug and the 30 mm stiff lead run under the display back
 INSERT_DEPTH_INTO_WALL = 1.5   # insert holes run on into the 2 mm back wall so a 4 mm insert seats fully in a 3 mm boss
 # Draft 2.6 layout: the GPS board moved to the RIGHT half, rotated 180 degrees in plane (components still toward the
 # display), so its edge-mount SMA jack points -X and the lead's plug plus 30 mm stiff section (about 50 mm straight)
 # runs left along y = 3.9 under bare PCB (0.8 mm above the connector row's footprint), clear of everything, from x = 7.6 to x = -42 and on to the coax notch in the top wall at x = -21. The IMU moved
 # to the upper left, above that lane. GPS_CORNER is the board's local (40.64, 36.8) corner in the device frame.
-GPS_CORNER = (48.0, 29.5)
+GPS_CORNER = (48.0, 27.0)       # top edge 0.9 mm below the (46, 29.94) press pad
 GPS_HOLES = [(2.54, 2.54), (38.1, 2.54), (2.54, 34.2646), (38.1, 34.2646)]     # board local, SparkFun brd
 GPS_ORIGIN = (GPS_CORNER[0] - 40.64, GPS_CORNER[1] - 36.8046)                  # board local origin in device frame
-IMU_C = (-33.0, 22.0)          # SparkFun 1x1" ISM330DHCX centre, upper left, above the antenna lead's lane
+IMU_C = (-30.0, 20.0)          # SparkFun 1x1" ISM330DHCX centre, upper left under the (flush) speaker, clear of the (-46, 29.94) pad
 IMU_PITCH = 20.32              # confirmed from SparkFun brd 24 Oct 2026: 25.4 sq board, holes 2.54 in
-IMU_STANDOFF = 0.0             # components face the display PCB; 5 mm bosses leave 1.4 mm over the Qwiic plugs under the PCB-back parts
+
 # dovetail (draft 2.4): RAIL on the shell, GROOVE in the plate.
 # A dovetail groove in a face that is vertical in print always has a lip whose underside starts at a knife edge in
 # mid-air (the mouth edge), so the old strip under the shell could not print. A rail whose wide end stands on the
@@ -285,7 +286,7 @@ def make_shell():
         s = s.union(boss_h(GPS_CORNER[0] - hx, GPS_CORNER[1] - hy, GPS_BOSS_H))
     for dx in (-1, 1):
         for dy in (-1, 1):
-            s = s.union(boss_h(IMU_C[0] + dx * IMU_PITCH / 2, IMU_C[1] + dy * IMU_PITCH / 2, BOSS_H + IMU_STANDOFF))
+            s = s.union(boss_h(IMU_C[0] + dx * IMU_PITCH / 2, IMU_C[1] + dy * IMU_PITCH / 2, IMU_BOSS_H))
 
     # --- dovetail rail under the bottom wall, running along X, wide end (tip) at the back so its lowest corner
     # sits on the bed in print. The rail leans back by RAIL_LEAN_DEG (tip toward the windscreen) so that on a dash

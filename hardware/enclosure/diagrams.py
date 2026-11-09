@@ -44,7 +44,7 @@ def G(lx, ly):
 JACK_X, JACK_Y = G(40.41, 25.65)                        # SMA jack axis, pointing -X
 LANE_X0 = JACK_X - 50.0                                 # end of the plug (20) plus the stiff 30 mm of lead
 gps_z = md.SHELL_IN_BACK + md.GPS_BOSS_H               # board underside
-imu_z = md.SHELL_IN_BACK + md.BOSS_H + md.IMU_STANDOFF
+imu_z = md.SHELL_IN_BACK + md.IMU_BOSS_H
 IMU_HALF = 25.4 / 2
 lz = md.VISOR_FWD - md.LIGHT_FWD
 light_bz = lz - md.LIGHT_BOARD_W / 2 + 2.5
@@ -136,11 +136,16 @@ def fig_tray():
     # display PCB outline and the parts on its back (what the sensors must clear)
     rect(ax, -52, 52, PCB_CY - 28, PCB_CY + 28, fc='none', ec='#616161', lw=1.0, ls='--')
     rect(ax, -md.GLASS_W / 2, md.GLASS_W / 2, -md.GLASS_H / 2, md.GLASS_H / 2, fc='none', ec='#9e9e9e', lw=0.8, ls=':')
-    for (z0, z1, x0, x1, yy0, yy1, vol) in back_parts:
-        if vol < 20 or (x1 - x0) < 3:
+    # parts measured from Logan's back photo (display_back_parts.py); the STEP omits several of them
+    import display_back_parts as dbp
+    for (n, x0, x1, yy0, yy1, h) in dbp.PARTS:
+        if x0 is None or h <= 0.0:
             continue
         rect(ax, x0, x1, yy0, yy1, fc=C_PCBPART, ec='#757575', lw=0.6, alpha=0.75)
-    # display press pads (on bare PCB) and, dotted, Waveshare's corner standoffs they avoid
+        if (x1 - x0) > 14 and (yy1 - yy0) > 5:
+            ax.text((x0 + x1) / 2, (yy0 + yy1) / 2, n, ha='center', va='center', fontsize=6, color='#424242')
+    rect(ax, *dbp.PARTS[[p[0] for p in dbp.PARTS].index('speaker')][1:5], fc='none', ec='#757575', lw=0.6, ls='--')
+    # display press pads on the four corner screw heads
     for (x, y) in md.PCB_PRESS:
         ax.add_patch(Circle((x, y), md.PCB_PRESS_R, fc=C_SHELL, ec='k', lw=0.8))
     # GPS board
@@ -180,12 +185,12 @@ def fig_tray():
     # labels: left column (right-aligned at x = -70), right column (left-aligned at x = 70), top and bottom rows
     L, R = -70, 70
     label(ax, 'Visor cavity above the tray: antenna, light sensor\nand slide-in cover (see the plan view)', (-50, 47), (L, 50), ha='right')
-    label(ax, 'IMU ISM330DHCX, upper left, components toward the display,\nfour M2 inserts in 5 mm bosses. Qwiic ports face left and right.\nThe antenna lead (grey) crosses it between the two ports.',
+    label(ax, 'IMU ISM330DHCX, upper left, components toward the display,\nfour M2 x 3 inserts in 2.5 mm bosses, M2 x 4 screws. Qwiic ports face\nleft and right; it sits under the speaker, which is flush with the PCB.',
           (ix - 8, iy + 12), (L, 36), ha='right')
     label(ax, 'Cable A: 150 mm Qwiic-to-header cable, terminal\nround the left side to the IMU left port', (-55, 0), (L, 22), ha='right')
-    label(ax, 'Antenna lead: plug (dark grey, 20 mm) and the 30 mm STIFF\nsection beside it run dead straight along y = 4 under bare\nPCB; only the flexible part beyond x = -42 bends',
+    label(ax, 'Antenna lead: plug (dark grey, 20 mm) and the 30 mm STIFF\nsection beside it run dead straight along y = 1.4 under the\ndisplay, 5.5 mm behind its back; only the flexible part beyond x = -42 bends',
           (LANE_X0 + 8, JACK_Y - 1.5), (L, 10), ha='right')
-    label(ax, 'Grey blocks: parts on the BACK of the display board\n(screw terminal 7 mm deep, USB-C, DC in, TF slot, ESP32\nmodule, FPC, switches). Sensor parts must clear them.',
+    label(ax, 'Grey blocks: parts on the BACK of the display board, measured from\nLogan\'s photo of 9 Nov 2026 (the speaker, dashed, is flush and is not a\nblock). Sensor parts must clear them; see check_layout.py.',
           (-49, -10), (L, -4), ha='right')
     label(ax, 'SMA knockout, future external antenna', (-60, -25), (L, -18), ha='right')
     label(ax, 'Vents in the back plate and both end walls', (-44, -31), (L, -28), ha='right')
@@ -330,7 +335,7 @@ def fig_sections():
         if x == md.IMU_C[0]:
             rect(ax, imu_z, imu_z + 1.57, md.IMU_C[1] - IMU_HALF, md.IMU_C[1] + IMU_HALF, fc=C_IMU, ec='k', lw=0.8)
             ax.add_patch(Circle((gps_z + 1.6 + 3.17, JACK_Y), 1.5, fc='#aaa', ec='k', lw=0.5))
-            label(ax, 'IMU on 5 mm bosses, components toward the display\n(its Qwiic ports are off this section, at x = -46 and -20)', (imu_z + 1, md.IMU_C[1]), (-44, 60), ha='left')
+            label(ax, 'IMU on 2.5 mm bosses, components toward the display\n(its Qwiic ports are off this section, at x = -46 and -20)', (imu_z + 1, md.IMU_C[1]), (-44, 60), ha='left')
             label(ax, 'antenna lead, stiff section, below the IMU', (-16.2, JACK_Y - 1.5), (-44, -40), ha='left')
         if x == 42:
             rect(ax, lz - md.LIGHT_BOARD_W / 2, lz + md.LIGHT_BOARD_W / 2, roof_y - 4 - 1.57, roof_y - 4, fc=C_LIGHT, ec='k', lw=0.8)
@@ -404,7 +409,7 @@ def fig_exploded():
         'display': ('2. Waveshare 4.3C display. Not screwed: trapped between the bezel lip\nand four press pads on bare PCB when the shell snaps on.', (60, 420)),
         'shell': ('3. Shell (printed back down) slides over the bezel from behind and clicks\nonto the fingers. Carries every sensor.', (1250, 820)),
         'gps': ('4. GPS NEO-M9N board, right half: four M2 x 3 heat-set inserts in 2 mm bosses,\ncomponents toward the display, SMA jack pointing left.', (1250, 150)),
-        'imu': ('5. IMU ISM330DHCX, upper left: four M2 x 4 inserts in 5 mm bosses,\ncomponents toward the display.', (1250, 560)),
+        'imu': ('5. IMU ISM330DHCX, upper left: four M2 x 3 inserts in 2.5 mm bosses,\ncomponents toward the display.', (1250, 560)),
         'antenna': ('6. GPS patch antenna: 3M pad onto the visor floor, boxed by ribs. Its lead leaves\nthe pocket at the front-left corner and drops through the coax notch to the SMA jack.', (1250, 30)),
         'light': ('7. Light sensor: two M2 x 12 screws down through the roof and bosses,\nnuts under the board, lens facing the cover slot.', (60, 620)),
         'cover': ('8. Visor cover slides in from the right along grooves in the\nroof and floor, after the antenna and light sensor are in.', (1250, 430)),
