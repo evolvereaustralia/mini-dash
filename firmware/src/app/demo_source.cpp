@@ -174,7 +174,8 @@ namespace Demo {
 
 void start(TripEngine *engine) {
   g_engine = engine;
-  xTaskCreatePinnedToCore(demoTask, "demo", 6 * 1024, nullptr, 1, nullptr, 0);
+  if (xTaskCreatePinnedToCore(demoTask, "demo", 6 * 1024, nullptr, 1, nullptr, 0) != pdPASS)
+    Serial.println("demo: the replay task could not be started; the replay is unavailable this boot");
 }
 
 void setEnabled(bool on) { g_enabled = on; }

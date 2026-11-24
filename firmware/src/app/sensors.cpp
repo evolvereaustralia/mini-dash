@@ -551,11 +551,17 @@ void start(TripEngine *engine) {
   Serial.printf("sensors: GPS %s, IMU %s, lux %s\n", !g_gpsOk ? "absent" : (g_gpsConfigOk ? "ok" : "present but NOT configured"), g_imuOk ? "ok" : "absent",
                 g_luxOk ? "ok" : "absent");
   I2cBus::resetStats();
+  // "Ready" is said only once the task that reads the sensors exists (review finding 19); if it
+  // cannot be created the splash times out on its own and the screen shows dashes.
+  if (xTaskCreatePinnedToCore(sensorTask, "sensors", 8 * 1024, nullptr, 3, nullptr, 0) != pdPASS) {
+    Serial.println("sensors: the task could NOT be started; no GPS, IMU or light readings this boot");
+    g_gpsOk = g_imuOk = g_luxOk = false;
+    return;
+  }
   {
     VsLock lk;
     if (lk.ok()) Vs::raw().sensorsReady = true;
   }
-  xTaskCreatePinnedToCore(sensorTask, "sensors", 8 * 1024, nullptr, 3, nullptr, 0);
 }
 
 bool gpsOk() { return g_gpsOk; }
