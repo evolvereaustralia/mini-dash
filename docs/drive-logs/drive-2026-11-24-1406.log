@@ -22,13 +22,13 @@ GPS: I2C UBX-only ok, nav rate ok, autoPVT ok
 [  1407][W][Wire.cpp:300] begin(): Bus already started in Master Mode.
 [  1623][W][i2c_bus.cpp:87] ~I2cLock(): I2C held 216 ms by lux.begin (limit 25)
 sensors: GPS ok, IMU ok, lux ok
-OBD: on, dongle dd:0d:30:89:1b:a7
+OBD: on, dongle xx:xx:xx:xx:xx:xx
 [  1633][I][BLEDevice.cpp:293] init(): Initializing BLE stack: NimBLE
 clock: RTC set from GPS, 1795489563
 [  1709][I][BLEDevice.cpp:1497] host_task(): NimBLE host task started
 OBD: Bluetooth up, heap 127052 to 53620
 OBD: connecting
-OBD: connecting to dd:0d:30:89:1b:a7 (stored dongle)
+OBD: connecting to xx:xx:xx:xx:xx:xx (stored dongle)
 keys: d demo, 1..9/0 backlight, p screenshot, n next tab, D/R/Y/E/B page, x settings, i scan, r reboot
 [  2141][I][BLEClient.cpp:1167] handleGAPEvent(): BLEClient: Connected event. Handle: 0
 [  2191][I][BLEClient.cpp:1318] handleGAPEvent(): mtu update event; conn_handle=0 mtu=247
@@ -607,7 +607,7 @@ M,59164,-0.001,+0.001,+0.1,42.0,0.001,0.52,0.0,1,1,1.009,0.5,1.009
 M,59265,-0.001,+0.001,+0.1,42.0,0.001,0.52,0.0,1,1,1.009,0.5,1.009
 M,59366,+0.000,+0.001,-0.6,42.0,0.001,0.52,0.0,1,1,1.009,0.5,1.009
 M,59467,-0.002,+0.001,-1.6,42.0,0.001,0.52,0.0,1,1,1.009,0.5,1.009
-OBD status: live, dongle dd:0d:30:89:1b:a7 'stored dongle', adapter 'ELM327 v2.2', notify 00002af0-0000-1000-8000-00805f9b34fb, write 00002af1-0000-1000-8000-00805f9b34fb (no res
+OBD status: live, dongle xx:xx:xx:xx:xx:xx 'stored dongle', adapter 'ELM327 v2.2', notify 00002af0-0000-1000-8000-00805f9b34fb, write 00002af1-0000-1000-8000-00805f9b34fb (no res
 OBD status: power updates 2.0 Hz, 449 requests, 0 unanswered (0.0 %), linked 55 s
 OBD item: ECU 07 DID DD68 on  period 150 ms, 1 frames, ok 98 fail 0, mean round trip 126 ms, last ok
 OBD item: ECU 07 DID DD69 on  period 150 ms, 2 frames, ok 97 fail 0, mean round trip 141 ms, last ok

@@ -22,13 +22,13 @@ GPS: I2C UBX-only ok, nav rate ok, autoPVT ok
 [  1417][W][Wire.cpp:300] begin(): Bus already started in Master Mode.
 [  1633][W][i2c_bus.cpp:87] ~I2cLock(): I2C held 216 ms by lux.begin (limit 25)
 sensors: GPS ok, IMU ok, lux ok
-OBD: on, dongle dd:0d:30:89:1b:a7
+OBD: on, dongle xx:xx:xx:xx:xx:xx
 [  1643][I][BLEDevice.cpp:293] init(): Initializing BLE stack: NimBLE
 clock: RTC set from GPS, 1795489828
 [  1718][I][BLEDevice.cpp:1497] host_task(): NimBLE host task started
 OBD: Bluetooth up, heap 126936 to 53608
 OBD: connecting
-OBD: connecting to dd:0d:30:89:1b:a7 (stored dongle)
+OBD: connecting to xx:xx:xx:xx:xx:xx (stored dongle)
 keys: d demo, 1..9/0 backlight, p screenshot, n next tab, D/R/Y/E/B page, x settings, i scan, r reboot
 [  2251][I][BLEClient.cpp:1167] handleGAPEvent(): BLEClient: Connected event. Handle: 0
 [  2301][I][BLEClient.cpp:1318] handleGAPEvent(): mtu update event; conn_handle=0 mtu=247
@@ -608,7 +608,7 @@ M,59188,-0.000,+0.000,-0.0,10.2,0.000,0.57,0.0,1,1,1.003,0.1,1.002
 M,59294,-0.000,+0.000,+0.0,10.2,0.000,0.57,0.0,1,1,1.003,0.1,1.002
 M,59394,+0.000,+0.000,-0.0,10.2,0.000,0.57,0.0,1,1,1.003,0.1,1.002
 M,59495,-0.000,+0.000,-0.0,10.2,0.000,0.57,0.0,1,1,1.003,0.1,1.002
-OBD status: live, dongle dd:0d:30:89:1b:a7 'stored dongle', adapter 'ELM327 v2.2', notify 00002af0-0000-1000-8000-00805f9b34fb, write 00002af1-0000-1000-8000-00805f9b34fb (no res
+OBD status: live, dongle xx:xx:xx:xx:xx:xx 'stored dongle', adapter 'ELM327 v2.2', notify 00002af0-0000-1000-8000-00805f9b34fb, write 00002af1-0000-1000-8000-00805f9b34fb (no res
 OBD status: power updates 1.9 Hz, 460 requests, 0 unanswered (0.0 %), linked 55 s
 OBD item: ECU 07 DID DD68 on  period 500 ms, 1 frames, ok 76 fail 0, mean round trip 99 ms, last ok
 OBD item: ECU 07 DID DD69 on  period 150 ms, 2 frames, ok 103 fail 0, mean round trip 163 ms, last ok
@@ -1219,7 +1219,7 @@ M,119409,+0.000,-0.000,+0.0,10.2,0.000,0.58,0.0,1,1,1.002,0.0,1.002
 M,119509,-0.000,+0.000,+0.0,10.2,0.000,0.58,0.0,1,1,1.002,0.0,1.002
 M,119611,-0.001,-0.000,-0.0,10.2,0.000,0.58,0.0,1,1,1.002,0.0,1.002
 M,119720,+0.000,+0.001,-0.1,10.2,0.000,0.58,0.0,1,1,1.003,0.1,1.002
-OBD status: live, dongle dd:0d:30:89:1b:a7 'stored dongle', adapter 'ELM327 v2.2', notify 00002af0-0000-1000-8000-00805f9b34fb, write 00002af1-0000-1000-8000-00805f9b34fb (no res
+OBD status: live, dongle xx:xx:xx:xx:xx:xx 'stored dongle', adapter 'ELM327 v2.2', notify 00002af0-0000-1000-8000-00805f9b34fb, write 00002af1-0000-1000-8000-00805f9b34fb (no res
 OBD status: power updates 2.4 Hz, 948 requests, 0 unanswered (0.0 %), linked 115 s
 OBD item: ECU 07 DID DD68 on  period 500 ms, 1 frames, ok 159 fail 0, mean round trip 98 ms, last ok
 OBD item: ECU 07 DID DD69 on  period 150 ms, 2 frames, ok 213 fail 0, mean round trip 163 ms, last ok

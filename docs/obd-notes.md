@@ -52,7 +52,7 @@ The firmware prints these on serial; `firmware/tools/drive_log.py` captures them
 
 ### 24 Nov 2026, first connection, car in READY and stationary (drive-2026-11-24-1402.log)
 
-- Dongle: BLE address dd:0d:30:89:1b:a7. Adapter identifies as `ELM327 v2.2`, port voltage 14.2 V.
+- Dongle: BLE address not recorded here (public repo; the dash stores it in NVS). Adapter identifies as `ELM327 v2.2`, port voltage 14.2 V.
 - GATT: service 18F0 with 2AF0 (notify, indicate) and 2AF1 (write, write without response), which is the pair in use; also a vendor service e7810a71-73ae-499d-8c15-faa9aef0c3f2 with one characteristic bef8d6c9-9c21-4c9e-b632-bd58c1009f9f that does everything. Not the FFF0 layout the brief guessed.
 - Every set-up command accepted, including one receive filter for all ECUs (`ATCF600`, `ATCM700`) and the "expected responses" digit after a request.
 
