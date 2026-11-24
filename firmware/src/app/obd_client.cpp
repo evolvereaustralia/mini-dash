@@ -25,7 +25,12 @@ constexpr uint32_t CONNECT_TIMEOUT_MS = 6000;
 constexpr uint8_t ASLEEP_AFTER = 3;           // consecutive unanswered requests: the car is asleep
 constexpr uint8_t RECONNECT_AFTER = 3;        // consecutive requests the dongle itself ignored
 constexpr uint32_t ASLEEP_PROBE_MS = 1500;
-constexpr uint32_t FAST_MS = 200, SLOW_MS = 2000, RANGE_MS = 5000;
+// Periods are targets. What the Drive page shows moving (battery power, wheel speed) is asked
+// for as fast as the link allows; torque and pedal (Dynamics page) at about 1 Hz, so they do
+// not cost the first two their rate: every change of ECU costs adapter commands.
+// Pack voltage moves slowly next to the current, so it is refreshed twice a second and the
+// power figure follows the current.
+constexpr uint32_t FAST_MS = 150, VOLTS_MS = 500, DRIVE_MS = 900, SLOW_MS = 2000, RANGE_MS = 5000;
 
 struct PollItem {
   uint8_t ecu;
@@ -34,6 +39,7 @@ struct PollItem {
   bool enabled;
   uint32_t lastMs = 0, ok = 0, fail = 0, rttSumMs = 0;
   uint8_t failRun = 0;
+  uint8_t frames = 0, countFails = 0;  // frames the answer takes, learnt; 0 until known or if the digit misfired
   bool seen = false, done = false, demoted = false;
   ObdProto::Reply lastReply = ObdProto::Reply::NoData;
   uint8_t lastNrc = 0;
@@ -45,12 +51,12 @@ struct PollItem {
 // one (0.01 km/h, proven on other F56s only) is tried first and the head unit's (1 km/h,
 // proven on the SE by OVMS) takes over if the car refuses it.
 PollItem g_items[] = {
-    {ECU_SME, DID_SME_VOLTS, FAST_MS},
+    {ECU_SME, DID_SME_VOLTS, VOLTS_MS},
     {ECU_SME, DID_SME_AMPS, FAST_MS},
-    {ECU_EME, DID_EME_MACHINE, FAST_MS},
+    {ECU_EME, DID_EME_MACHINE, DRIVE_MS},
     {ECU_DSC, DID_DSC_WHEELS, FAST_MS},
     {ECU_NBT, DID_NBT_WHEELS, FAST_MS, false},
-    {ECU_EDM, DID_EDM_PEDAL, FAST_MS},
+    {ECU_EDM, DID_EDM_PEDAL, DRIVE_MS},
     {ECU_SME, DID_SME_SOC, SLOW_MS},
     {ECU_SME, DID_SME_TEMPS, SLOW_MS},
     {ECU_SME, DID_SME_CELLS, SLOW_MS},
@@ -77,6 +83,10 @@ char g_dongleName[24] = "", g_adapterId[40] = "", g_chars[96] = "";
 CarData g_car;
 uint8_t g_curEcu = 0xFF;
 bool g_fcModeSet = false;
+// One receive filter for every ECU (ids 0x600 to 0x6FF) saves a command per change of ECU.
+// Tried at set-up; dropped again if the first requests under it fail.
+bool g_wideFilter = false;
+uint8_t g_wideOk = 0, g_wideFail = 0;
 uint32_t g_visitStartMs = 0;
 uint8_t g_silentRun = 0, g_unansweredRun = 0;
 uint32_t g_requests = 0, g_timeouts = 0, g_fastCount = 0, g_rateWindowMs = 0, g_scans = 0;
@@ -202,9 +212,9 @@ bool elmSetup() {
     return false;
   }
   // Echo off, linefeeds off, spaces off, headers on, ISO 15765-4 CAN 11-bit 500 kbit, adaptive
-  // timing, 200 ms adapter timeout (under our 300 ms bound), tester id on transmit and on the
+  // timing, 100 ms adapter timeout (under our 300 ms bound), tester id on transmit and on the
   // flow control frames. The ECU-specific parts follow in selectEcu().
-  static const char *const SEQ[] = {"ATE0", "ATL0", "ATS0", "ATH1", "ATSP6", "ATAT1", "ATST32", "ATSH6F1", "ATFCSH6F1"};
+  static const char *const SEQ[] = {"ATE0", "ATL0", "ATS0", "ATH1", "ATSP6", "ATAT1", "ATST19", "ATSH6F1", "ATFCSH6F1"};
   for (const char *cmd : SEQ) {
     if (!at(cmd, reply, sizeof(reply))) {
       Serial.printf("OBD setup: %s not accepted\n", cmd);
@@ -218,6 +228,9 @@ bool elmSetup() {
   Serial.printf("OBD adapter: %s, port voltage %s\n", g_adapterId, volts);
   g_curEcu = 0xFF;
   g_fcModeSet = false;
+  g_wideOk = g_wideFail = 0;
+  g_wideFilter = at("ATCF600") && at("ATCM700");
+  Serial.printf("OBD setup: one receive filter for all ECUs %s\n", g_wideFilter ? "accepted, on trial" : "not accepted, per-ECU filter");
   return true;
 }
 
@@ -228,8 +241,10 @@ bool selectEcu(uint8_t ecu) {
   char cmd[24];
   snprintf(cmd, sizeof(cmd), "ATCEA%02X", ecu);
   if (!at(cmd)) return false;
-  snprintf(cmd, sizeof(cmd), "ATCRA%03X", OBD_RX_BASE + ecu);
-  if (!at(cmd)) return false;
+  if (!g_wideFilter) {
+    snprintf(cmd, sizeof(cmd), "ATCRA%03X", OBD_RX_BASE + ecu);
+    if (!at(cmd)) return false;
+  }
   snprintf(cmd, sizeof(cmd), "ATFCSD%02X300000", ecu);
   if (!at(cmd)) return false;
   if (!g_fcModeSet) {
@@ -246,9 +261,11 @@ enum class Outcome : uint8_t { Good, Unanswered, Silent, Refused, Bad };
 Outcome request(PollItem &it) {
   uint32_t t0 = millis();
   it.lastMs = t0;
-  if (!selectEcu(it.ecu)) return g_connected ? Outcome::Silent : Outcome::Silent;
+  if (!selectEcu(it.ecu)) return Outcome::Silent;
+  it.lastMs = millis();  // after the visit began, so the first identifier of a visit is not asked twice in it
   char req[12], reply[400];
-  ObdProto::buildRequest(it.did, req, sizeof(req));
+  bool counted = it.frames >= 1 && it.frames <= 15 && it.countFails < 2;
+  ObdProto::buildRequest(it.did, req, sizeof(req), counted ? it.frames : 0);
   drain();
   g_requests++;
   if (!sendText(req)) return Outcome::Silent;
@@ -271,7 +288,15 @@ Outcome request(PollItem &it) {
   uint8_t payload[ObdProto::MAX_PAYLOAD];
   size_t len = 0;
   uint8_t nrc = 0;
-  ObdProto::Reply r = ObdProto::parseReply(reply, (size_t)n, it.ecu, it.did, payload, sizeof(payload), &len, &nrc);
+  int frames = 0;
+  ObdProto::Reply r = ObdProto::parseReply(reply, (size_t)n, it.ecu, it.did, payload, sizeof(payload), &len, &nrc, &frames);
+  if (r == ObdProto::Reply::Ok) {
+    if (it.frames == 0 && frames > 0 && frames <= 15) it.frames = (uint8_t)frames;
+  } else if (counted) {
+    // The expected-responses digit may be what went wrong: ask plainly next time.
+    it.frames = 0;
+    it.countFails++;
+  }
   it.lastReply = r;
   it.lastNrc = nrc;
   if (r == ObdProto::Reply::Ok) {
@@ -361,6 +386,8 @@ void resetItems() {
     it.lastMs = 0;
     it.failRun = 0;
     it.done = false;
+    it.frames = 0;
+    it.countFails = 0;
     if (it.demoted) {
       it.periodMs = it.periodMs == 10000 ? SLOW_MS : it.periodMs;
       it.demoted = false;
@@ -485,6 +512,9 @@ bool connectTo(const String &addr, uint8_t type, const char *name) {
     return false;
   }
   g_connected = true;
+  // 7.5 to 15 ms connection interval (the default is 20 to 40): every command is a write and a
+  // notification, so the interval is paid twice per exchange.
+  g_client->updateConnParams(6, 12, 0, 200);
   drain();
   if (!findSerial()) {
     Serial.println("OBD: no serial characteristics on this device");
@@ -626,6 +656,15 @@ void obdTask(void *) {
     PollItem &it = g_items[idx];
     Outcome o = request(it);
     account(it, o);
+    if (g_wideFilter && g_wideOk < 20) {
+      if (o == Outcome::Good) g_wideOk++;
+      else if (++g_wideFail >= 4) {
+        Serial.println("OBD: requests fail under the shared receive filter, back to one filter per ECU");
+        g_wideFilter = false;
+        g_curEcu = 0xFF;
+        g_silentRun = g_unansweredRun = 0;
+      }
+    }
     if (g_silentRun >= RECONNECT_AFTER) {
       Serial.println("OBD: the dongle stopped answering, reconnecting");
       disconnect();
@@ -684,8 +723,8 @@ void printStatus() {
                 (unsigned long)g_timeouts, g_requests ? 100.0f * g_timeouts / g_requests : 0.0f,
                 g_connected ? (unsigned long)((millis() - g_connectedAtMs) / 1000) : 0UL);
   for (const PollItem &it : g_items) {
-    Serial.printf("OBD item: ECU %02X DID %04X %s period %lu ms, ok %lu fail %lu, mean round trip %lu ms, last %s%s\n", it.ecu, it.did,
-                  it.enabled ? "on " : "off", (unsigned long)it.periodMs, (unsigned long)it.ok, (unsigned long)it.fail,
+    Serial.printf("OBD item: ECU %02X DID %04X %s period %lu ms, %u frames, ok %lu fail %lu, mean round trip %lu ms, last %s%s\n", it.ecu, it.did,
+                  it.enabled ? "on " : "off", (unsigned long)it.periodMs, it.frames, (unsigned long)it.ok, (unsigned long)it.fail,
                   it.ok ? (unsigned long)(it.rttSumMs / it.ok) : 0UL, ObdProto::replyName(it.lastReply), it.demoted ? " (demoted)" : "");
   }
 }

@@ -42,7 +42,10 @@ bool contains(const char *text, size_t len, const char *needle) {
 
 namespace ObdProto {
 
-void buildRequest(uint16_t did, char *out, size_t n) { snprintf(out, n, "%02X%04X\r", UDS_READ_DID, did); }
+void buildRequest(uint16_t did, char *out, size_t n, int frames) {
+  if (frames >= 1 && frames <= 15) snprintf(out, n, "%02X%04X%X\r", UDS_READ_DID, did, frames);
+  else snprintf(out, n, "%02X%04X\r", UDS_READ_DID, did);
+}
 
 bool replyOk(const char *text) {
   size_t len = strlen(text);
@@ -61,8 +64,10 @@ const char *replyName(Reply r) {
 }
 
 Reply parseReply(const char *text, size_t textLen, uint8_t ecu, uint16_t did, uint8_t *payload, size_t payloadMax,
-                 size_t *payloadLen, uint8_t *nrc) {
+                 size_t *payloadLen, uint8_t *nrc, int *frames) {
   *payloadLen = 0;
+  if (frames) *frames = 0;
+  int msgFrames = 0;
   if (nrc) *nrc = 0;
   const uint16_t wantId = (uint16_t)(OBD_RX_BASE + ecu);
   uint8_t msg[MAX_PAYLOAD + 3];
@@ -118,6 +123,7 @@ Reply parseReply(const char *text, size_t textLen, uint8_t ecu, uint16_t did, ui
         size_t l = pci & 0x0F;
         if (l == 0 || (size_t)n < 2 + l) { sawPartial = true; break; }
         nextSeq = -1;
+        msgFrames = 1;
         finish(b + 2, l);
         break;
       }
@@ -128,6 +134,7 @@ Reply parseReply(const char *text, size_t textLen, uint8_t ecu, uint16_t did, ui
         if (msgTotal < 7 || msgTotal > sizeof(msg)) { nextSeq = -1; sawPartial = true; break; }
         for (int i = 3; i < n && msgLen < msgTotal; i++) msg[msgLen++] = b[i];
         nextSeq = 1;
+        msgFrames = 1;
         break;
       }
       case 2: {  // consecutive frame
@@ -135,6 +142,7 @@ Reply parseReply(const char *text, size_t textLen, uint8_t ecu, uint16_t did, ui
         if ((pci & 0x0F) != (nextSeq & 0x0F)) { nextSeq = -1; sawPartial = true; break; }
         for (int i = 2; i < n && msgLen < msgTotal; i++) msg[msgLen++] = b[i];
         nextSeq++;
+        msgFrames++;
         if (msgLen >= msgTotal) {
           nextSeq = -1;
           finish(msg, msgTotal);
@@ -144,7 +152,10 @@ Reply parseReply(const char *text, size_t textLen, uint8_t ecu, uint16_t did, ui
       default: break;  // flow control and anything else
     }
   }
-  if (done) return result;
+  if (done) {
+    if (frames && result == Reply::Ok) *frames = msgFrames;
+    return result;
+  }
   if (nextSeq >= 0 || sawPartial) return Reply::Malformed;
   if (adapterError) return Reply::Adapter;
   if (noData || !sawFrame) return Reply::NoData;

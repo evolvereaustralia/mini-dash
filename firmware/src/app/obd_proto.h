@@ -27,12 +27,14 @@ enum class Reply : uint8_t {
 
 constexpr size_t MAX_PAYLOAD = 96;
 
-// "22DD68\r" into out (at least 8 bytes).
-void buildRequest(uint16_t did, char *out, size_t n);
+// "22DD68\r" into out (at least 9 bytes). With frames 1..15 the ELM "expected responses" digit
+// is appended ("22DD681\r"): the adapter then answers as soon as that many frames arrived
+// instead of waiting out its timeout, which is most of a request's time otherwise.
+void buildRequest(uint16_t did, char *out, size_t n, int frames = 0);
 
 // Parse one reply. text need not be terminated by the prompt; lines end in \r or \n.
 Reply parseReply(const char *text, size_t textLen, uint8_t ecu, uint16_t did, uint8_t *payload, size_t payloadMax,
-                 size_t *payloadLen, uint8_t *nrc);
+                 size_t *payloadLen, uint8_t *nrc, int *frames = nullptr);  // frames: lines the answer took
 
 // True when an AT command's reply contains OK (or, for ATZ and ATI, the ELM banner).
 bool replyOk(const char *text);

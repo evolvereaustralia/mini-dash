@@ -8,6 +8,8 @@
 //           request and response pairs from cars (the vectors in firmware/test/native).
 //   [car]   a pair logged from Logan's car in docs/obd-notes.md.
 // Where the two sources disagree or only one has a value, the comment says so.
+// [car] 24 Nov 2026: every identifier below answered on Logan's car at the first connection
+// with plausible values (docs/obd-notes.md), including the DSC wheel speeds.
 //
 // Transport: BMW F-series diagnostics, ISO 15765 on 11-bit CAN at 500 kbit with extended
 // addressing. We transmit on 0x6F1 with the ECU address as the first data byte; the ECU
@@ -57,7 +59,7 @@ constexpr uint16_t DID_EDM_IBS = 0x402B;    // 12 V battery sensor: u16 / 4000 +
 
 // Wheel speeds. Two candidates; the client probes the first at connection and falls back.
 constexpr uint16_t DID_DSC_WHEELS = 0xDBE4;  // s16 / 100 km/h at 0 FL, 2 FR, 4 RL, 6 RR. [OBDb] only (COOPER_FL_VSS..., recorded
-                                             // on 2014+ cars); not in [OVMS], so unproven on the SE until [car]
+                                             // on 2014+ cars); not in [OVMS]; [car] answers on the SE
 constexpr uint16_t DID_NBT_WHEELS = 0xD030;  // s16 km/h (whole numbers) at 0, 2, 4, 6. [OVMS] NBT_STATUS_SPEED; [OBDb] COOPER_NBT_WHL_SPD_n
 
 // KOM, cluster.

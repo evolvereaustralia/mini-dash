@@ -50,4 +50,29 @@ The firmware prints these on serial; `firmware/tools/drive_log.py` captures them
 
 ## Log
 
-(nothing from the car yet)
+### 24 Nov 2026, first connection, car in READY and stationary (drive-2026-11-24-1402.log)
+
+- Dongle: BLE address dd:0d:30:89:1b:a7. Adapter identifies as `ELM327 v2.2`, port voltage 14.2 V.
+- GATT: service 18F0 with 2AF0 (notify, indicate) and 2AF1 (write, write without response), which is the pair in use; also a vendor service e7810a71-73ae-499d-8c15-faa9aef0c3f2 with one characteristic bef8d6c9-9c21-4c9e-b632-bd58c1009f9f that does everything. Not the FFF0 layout the brief guessed.
+- Every set-up command accepted, including one receive filter for all ECUs (`ATCF600`, `ATCM700`) and the "expected responses" digit after a request.
+
+| ECU | DID | Payload (after 62 DD DD) | Decoded |
+|---|---|---|---|
+| 07 | DD68 | 8C03 | pack 358.43 V |
+| 07 | DD69 | FFFFFCFC | -7.72 A in the car's convention, +7.72 A discharge, 2.77 kW |
+| 07 | DDBC | 01FB03E70091 | SOC 50.7 %, maximum 99.9 %, minimum 14.5 %; scaled 42.4 % |
+| 07 | DDC0 | 06A5076B0735 | pack temperature min 17.01, max 18.99, mean 18.45 C |
+| 07 | DFA0 | 25DD26B3264791AA921691D906A5076B0735FFFFFFFF268F15B3167E1614920492729235268F | cells min 3.7290, max 3.7398, mean 3.7337 V |
+| 07 | 6335 | 00000064 | SOH 100 % |
+| 1A | DEA7 | 27100000000000 | motor 0 rpm, torque 0.0 Nm, requested 0.0 Nm |
+| 1A | DEA6 | 05350532 | motor temperatures 20.8 and 20.7 C |
+| 29 | DBE4 | 00000000000000000000030303030064646464 | wheels 0.00 km/h each: the DSC source answers on the SE |
+| 12 | DE9C | 0093004A0000 | pedal 0.0 % |
+| 12 | 402B | 00E183E8097100000700004B00020000000000000000000200000000 | 12 V battery 14.442 V |
+| 60 | D111 | 02C6060E02C6FFFF3C740071 | range 71.0 km (maximum 155.0 km) |
+
+Nothing refused, nothing unanswered in 1400 requests across four sessions. Plausibility: 96 cells at 3.7337 V is 358.4 V, the pack reading; the 12 V figure agrees with the adapter's own 14.2 V.
+
+Rates (requests answered per second, all identifiers): 5.2 as first written; 8.2 with a 7.5 to 15 ms connection interval, the expected-responses digit and a 100 ms adapter timeout; 9 with the shared receive filter. A request costs 45 to 130 ms depending on the ECU (the battery ECU is the slowest), a change of ECU about 50 ms. Result with the schedule as committed: battery power 1.9 Hz, wheel speeds 1.9 Hz, pack voltage 1.4 Hz, torque and pedal 0.45 Hz, slow group every 2 s. The brief's 5 Hz for the whole fast group is not reachable through this adapter.
+
+Still open: the SOC shown on the dash at that moment (42 or 51), the power sign under acceleration and regen, wheel speed against the speedo.

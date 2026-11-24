@@ -123,6 +123,20 @@ int main() {
   char req[12];
   ObdProto::buildRequest(DID_SME_VOLTS, req, sizeof(req));
   CHECK(strcmp(req, "22DD68\r") == 0, "request '%s'", req);
+  ObdProto::buildRequest(DID_SME_CELLS, req, sizeof(req), 7);
+  CHECK(strcmp(req, "22DFA07\r") == 0, "counted request '%s'", req);
+  {
+    uint8_t pl[ObdProto::MAX_PAYLOAD];
+    size_t n = 0;
+    int frames = 0;
+    const char *sf = "607F10562DD6886F9\r>";
+    ObdProto::parseReply(sf, strlen(sf), ECU_SME, DID_SME_VOLTS, pl, sizeof(pl), &n, nullptr, &frames);
+    CHECK(frames == 1, "single frame count %d", frames);
+    const char *mf = "607F10562DD6881CA\r607F1102962DFA023BB\r607F121255124A486C0\r607F122879E87350A9B\r607F1230CE50BDFFFFF\r607F124FFFF2C750AEE\r"
+                     "607F1250BE70B3DFFFF\r607F126FFFFFFFF2C75\r>";
+    ObdProto::parseReply(mf, strlen(mf), ECU_SME, DID_SME_CELLS, pl, sizeof(pl), &n, nullptr, &frames);
+    CHECK(frames == 7, "multi-frame count %d (the stale frame in front is not counted)", frames);
+  }
   CHECK(ObdProto::replyOk("OK\r\r>") && ObdProto::replyOk("\rELM327 v2.2\r\r>") && !ObdProto::replyOk("?\r>"), "replyOk");
 
   printf("obd protocol: %d checks, %d failed\n", g_run, g_fail);
