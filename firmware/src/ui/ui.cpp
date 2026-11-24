@@ -402,8 +402,10 @@ struct {
   lv_obj_t *event = nullptr, *eTitle = nullptr, *eCtx = nullptr, *eMeta = nullptr, *eNote = nullptr, *eBack = nullptr;
   lv_obj_t *eChart[3] = {}, *eLabel[3] = {}, *eT0 = nullptr, *eT1 = nullptr;
   lv_chart_series_t *eSer[3] = {};
-  uint32_t eLoadedTrip = 0;
+  uint32_t eLoadedTrip = 0, eLoadedUtc = 0, eRetryMs = 0;
+  float eLoadedValue = 0;
   int eLoadedRec = -1;
+  uint8_t eRetries = 0;
   bool eHasTrace = false;
 } T;
 const char *REC_NAMES[REC_COUNT] = {"BEST 0–60 KM/H", "BEST 0–100 KM/H", "BEST 60–0 BRAKING",
@@ -588,9 +590,19 @@ void updateTrip() {
   }
   if (T.view == TV_EVENT) {
     const Record &r = rs.r[T.eventIdx];
-    if (r.valid && (r.tripId != T.eLoadedTrip || T.eventIdx != T.eLoadedRec)) {
+    // Reload when the record shown is a different one: another trip, another tile, or a new
+    // best in the same trip (same trip and tile, new value). A trace is written a couple of
+    // seconds after its record is accepted, so "none yet" is asked again every 2 s for a while
+    // instead of being remembered for good (review finding 24).
+    bool changed = r.tripId != T.eLoadedTrip || T.eventIdx != T.eLoadedRec || r.value != T.eLoadedValue || r.utc != T.eLoadedUtc;
+    bool retry = !changed && !T.eHasTrace && T.eRetries < 8 && g_now - T.eRetryMs >= 2000;
+    if (r.valid && (changed || retry)) {
+      T.eRetries = changed ? 0 : T.eRetries + 1;
+      T.eRetryMs = g_now;
       T.eLoadedTrip = r.tripId;
       T.eLoadedRec = T.eventIdx;
+      T.eLoadedValue = r.value;
+      T.eLoadedUtc = r.utc;
       static Storage::TraceSample tr[Storage::TRACE_MAX];
       size_t n = 0;
       T.eHasTrace = g_cb.loadTrace && g_cb.loadTrace(r.tripId, T.eventIdx, tr, Storage::TRACE_MAX, &n) && n > 0;
@@ -798,10 +810,6 @@ void updateEnergy() {
   setValue(E.net, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.netKwh);
   setValue(E.rec, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.recoveredKwh);
   setValue(E.soc, g_vs.trip.energyValid && g_vs.trip.socStartPct >= 0, "%.0f %%", g_vs.trip.socUsedPct);
-  if (g_now - E.lastPoint >= 5000) {  // 120 points over 10 min
-    E.lastPoint = g_now;
-    lv_chart_set_next_value(E.chart, E.ser, live ? (lv_coord_t)lroundf(g_vs.car.powerKw) : LV_CHART_POINT_NONE);
-  }
   show(E.nodata, !live);
 }
 void buildBattery(lv_obj_t *p) {
@@ -834,11 +842,27 @@ void updateBattery() {
   setValue(B.cells, cells, "%.2f · %.2f · %.2f V", g_vs.car.cellAvgV, g_vs.car.cellMinV, g_vs.car.cellMaxV);
   setValue(B.v12, carItem(g_vs.car.v12StampMs, STALE_OBD_SLOW_MS), "%.1f V", g_vs.car.v12);
   setValue(B.soh, carUp() && g_vs.car.sohStampMs != 0, "%.0f %%", g_vs.car.sohPct);  // read once per connection
-  if (g_now - B.lastPoint >= 5000) {
-    B.lastPoint = g_now;
-    lv_chart_set_next_value(B.chart, B.ser, temps ? (lv_coord_t)lroundf(g_vs.car.tempAvg) : LV_CHART_POINT_NONE);
-  }
   show(B.nodata, !(volts || amps || temps || cells));
+}
+
+// The two ten-minute charts take a point every 5 s whichever page is showing. They used to be
+// fed only while their own page was open, so the "last 10 min" was really the last ten minutes
+// spent looking at it, stitched together with no gap shown (review finding 27). The power
+// point is the mean of the live readings in its 5 s, a gap when there were none.
+void sampleCharts() {
+  static float kwSum = 0;
+  static int kwN = 0;
+  if (carFast()) {
+    kwSum += g_vs.car.powerKw;
+    kwN++;
+  }
+  if (g_now - E.lastPoint < 5000) return;  // 120 points over 10 min
+  E.lastPoint = g_now;
+  if (E.chart) lv_chart_set_next_value(E.chart, E.ser, kwN ? (lv_coord_t)lroundf(kwSum / kwN) : LV_CHART_POINT_NONE);
+  kwSum = 0;
+  kwN = 0;
+  bool temps = carItem(g_vs.car.tempStampMs, STALE_OBD_SLOW_MS);
+  if (B.chart) lv_chart_set_next_value(B.chart, B.ser, temps ? (lv_coord_t)lroundf(g_vs.car.tempAvg) : LV_CHART_POINT_NONE);
 }
 
 // ---- Settings ----------------------------------------------------------------------------
@@ -1115,6 +1139,7 @@ void tickCb(lv_timer_t *) {
     }
   }
   updateHeader();
+  sampleCharts();
   switch (g_page) {
     case Ui::PAGE_DRIVE: updateDrive(); break;
     case Ui::PAGE_TRIP: updateTrip(); break;

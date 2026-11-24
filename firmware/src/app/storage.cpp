@@ -20,8 +20,32 @@ constexpr const char *FS_LABEL = "ffat";  // the 9 MB data partition of app3M_fa
 constexpr const char *FS_MOUNT = "/lfs";  // where LittleFS is mounted in the VFS, for the POSIX calls below
 constexpr uint32_t TRIP_MAGIC = 0x54524950;  // "TRIP"
 constexpr uint32_t TEST_ID_BASE = 900000;  // trips written by the old self-test; never part of the sequence
-constexpr uint16_t TRIP_VERSION = 2;  // 2: the braking record is 60-0 (was 100-0 in version 1)
-constexpr uint32_t EVENT_MAGIC = 0x45564E54;  // "EVNT"
+// Trip file versions. 1: braking record was 100-0. 2: braking record is 60-0. 3: the same body
+// as 2 followed by a CRC-32 of everything before it (review finding 37). Versions 1 and 2 are
+// still read, by their exact size; they carry no checksum, so only their size, magic and
+// version can be tested.
+constexpr uint16_t TRIP_VERSION = 3;
+constexpr uint32_t EVENT_MAGIC = 0x45564E54;   // "EVNT": header and samples, no checksum (read only)
+constexpr uint32_t EVENT_MAGIC2 = 0x45564E32;  // "EVN2": header, samples, CRC-32 of both
+
+// The stored layouts are these structs byte for byte. If one of these fails, a field was added
+// or moved: give the file a new version (and say how the old one is read) before changing the
+// number here. A layout of the same size cannot be told apart by the reader, so it is caught
+// here, at build time, or not at all.
+static_assert(sizeof(Record) == 52, "Record layout changed: bump TRIP_VERSION and the lifetime version");
+static_assert(sizeof(RecordSet) == 312, "RecordSet layout changed: bump TRIP_VERSION and the lifetime version");
+static_assert(sizeof(Storage::TripSummary) == 424, "TripSummary layout changed: bump TRIP_VERSION");
+static_assert(sizeof(Storage::TraceSample) == 10, "TraceSample layout changed: new event magic needed");
+
+uint32_t crc32(const void *data, size_t n, uint32_t crc = 0) {
+  const uint8_t *p = static_cast<const uint8_t *>(data);
+  crc = ~crc;
+  for (size_t i = 0; i < n; i++) {
+    crc ^= p[i];
+    for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320UL & (0UL - (crc & 1)));
+  }
+  return ~crc;
+}
 
 Preferences g_prefs;
 bool g_fsOk = false, g_fsNeedsOwner = false;
@@ -32,7 +56,9 @@ struct TripFile {
   uint16_t version;
   uint16_t size;
   Storage::TripSummary body;
+  uint32_t crc;  // version 3 on; versions 1 and 2 end before it
 };
+constexpr size_t TRIP_FILE_LEGACY = offsetof(TripFile, crc);
 
 // A durable replacement of one file (review finding 03). The LittleFS port in this build syncs a
 // file the moment it is opened for writing, so opening the target itself commits an EMPTY file
@@ -96,15 +122,28 @@ bool readTrip(const char *path, Storage::TripSummary &out) {
   size_t total = f.size();
   size_t r = f.read(reinterpret_cast<uint8_t *>(&tf), sizeof(tf));
   f.close();
-  if (total != sizeof(tf)) return false;  // a short file, or one with something after the record
-  if (r != sizeof(tf) || tf.magic != TRIP_MAGIC || (tf.version != TRIP_VERSION && tf.version != 1) || tf.size != sizeof(Storage::TripSummary)) return false;
+  // A file is the whole record for its version or it is nothing: no prefix, nothing appended.
+  if (r != total || r < TRIP_FILE_LEGACY || tf.magic != TRIP_MAGIC || tf.size != sizeof(Storage::TripSummary)) return false;
+  if (tf.version == TRIP_VERSION) {
+    if (total != sizeof(tf) || tf.crc != crc32(&tf, TRIP_FILE_LEGACY)) return false;
+  } else if (tf.version == 1 || tf.version == 2) {
+    if (total != TRIP_FILE_LEGACY) return false;
+  } else {
+    return false;
+  }
   out = tf.body;
   if (tf.version == 1) out.records.r[REC_60_0] = Record();  // a 100-0 figure: not comparable
   return true;
 }
 
 bool writeTrip(const char *path, const Storage::TripSummary &t) {
-  TripFile tf = {TRIP_MAGIC, TRIP_VERSION, (uint16_t)sizeof(Storage::TripSummary), t};
+  static TripFile tf;  // the loop task is the only writer; static keeps 430 bytes off its stack
+  memset(&tf, 0, sizeof(tf));  // padding bytes are part of the checksum, so they are defined
+  tf.magic = TRIP_MAGIC;
+  tf.version = TRIP_VERSION;
+  tf.size = (uint16_t)sizeof(Storage::TripSummary);
+  tf.body = t;
+  tf.crc = crc32(&tf, TRIP_FILE_LEGACY);
   return writeBlock(path, &tf, sizeof(tf));
 }
 
@@ -119,7 +158,9 @@ int listTrips(uint32_t *ids, int max) {
     const char *base = strrchr(name, '/');
     base = base ? base + 1 : name;
     uint32_t id = strtoul(base, nullptr, 10);
-    if (id && strstr(base, ".trp") && n < max) ids[n++] = id;
+    size_t len = strlen(base);
+    bool isTrip = len > 4 && strcmp(base + len - 4, ".trp") == 0;  // the name ends in .trp: not .trp.tmp, not .bad
+    if (id && isTrip && n < max) ids[n++] = id;
     e.close();
   }
   dir.close();
@@ -444,6 +485,27 @@ void deleteEvents(uint32_t tripId) {
 // checkpoint leaves its traces behind too. At boot, after the checkpoint has been closed into
 // a trip file, every event file whose trip id has no trip file is an orphan. A bounded batch
 // per pass; the directory is not iterated while files are removed from it.
+// Trip files that cannot be read (damaged, or from a layout this build does not know) are set
+// aside as <id>.bad so they stop counting as trips and stop holding a place among the 60, and
+// are not destroyed. Run once at boot before any task writes.
+int quarantineUnreadableTrips() {
+  if (!g_fsOk) return 0;
+  uint32_t ids[MAX_TRIPS + 4];
+  int n = listTrips(ids, MAX_TRIPS + 4), moved = 0;
+  static TripSummary t;
+  for (int i = 0; i < n; i++) {
+    char path[40], bad[40];
+    tripPath(path, sizeof(path), ids[i]);
+    if (readTrip(path, t)) continue;
+    snprintf(bad, sizeof(bad), "/trips/%lu.bad", (unsigned long)ids[i]);
+    LittleFS.remove(bad);
+    if (LittleFS.rename(path, bad)) moved++;
+    g_faults++;
+    Serial.printf("storage: trip file %lu cannot be read; set aside as %lu.bad\n", (unsigned long)ids[i], (unsigned long)ids[i]);
+  }
+  return moved;
+}
+
 int pruneOrphanEvents() {
   if (!g_fsOk) return 0;
   uint32_t ids[MAX_TRIPS + 4 + MAX_ACTIVE];
@@ -514,6 +576,7 @@ struct EventFile {
   uint32_t magic;
   uint32_t count;
   TraceSample samples[TRACE_MAX];
+  uint32_t crcRoom;  // the CRC follows the last sample actually stored, wherever that is
 };
 }  // namespace
 
@@ -522,10 +585,13 @@ bool saveEvent(uint32_t tripId, int rec, const TraceSample *samples, size_t n) {
   char path[40];
   eventPath(path, sizeof(path), tripId, rec);
   static EventFile ef;  // the loop task is the only writer
-  ef.magic = EVENT_MAGIC;
+  ef.magic = EVENT_MAGIC2;
   ef.count = (uint32_t)n;
   memcpy(ef.samples, samples, n * sizeof(TraceSample));
-  return writeBlock(path, &ef, 2 * sizeof(uint32_t) + n * sizeof(TraceSample));
+  size_t body = 2 * sizeof(uint32_t) + n * sizeof(TraceSample);
+  uint32_t crc = crc32(&ef, body);
+  memcpy(reinterpret_cast<uint8_t *>(&ef) + body, &crc, sizeof(crc));
+  return writeBlock(path, &ef, body + sizeof(crc));
 }
 
 // A trace is either the whole file as written or nothing: a count beyond capacity, a file
@@ -542,9 +608,16 @@ bool loadEvent(uint32_t tripId, int rec, TraceSample *samples, size_t max, size_
     uint32_t count;
   } hdr;
   size_t total = f.size();
-  bool ok = f.read(reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)) == sizeof(hdr) && hdr.magic == EVENT_MAGIC && hdr.count >= 1 &&
-            hdr.count <= TRACE_MAX && hdr.count <= max && total == sizeof(hdr) + hdr.count * sizeof(TraceSample);
-  if (ok) ok = f.read(reinterpret_cast<uint8_t *>(samples), hdr.count * sizeof(TraceSample)) == hdr.count * sizeof(TraceSample);
+  bool ok = f.read(reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)) == sizeof(hdr) && (hdr.magic == EVENT_MAGIC || hdr.magic == EVENT_MAGIC2) &&
+            hdr.count >= 1 && hdr.count <= TRACE_MAX && hdr.count <= max;
+  bool checked = ok && hdr.magic == EVENT_MAGIC2;
+  size_t bytes = ok ? hdr.count * sizeof(TraceSample) : 0;
+  if (ok) ok = total == sizeof(hdr) + bytes + (checked ? sizeof(uint32_t) : 0);
+  if (ok) ok = f.read(reinterpret_cast<uint8_t *>(samples), bytes) == bytes;
+  if (ok && checked) {
+    uint32_t stored = 0;
+    ok = f.read(reinterpret_cast<uint8_t *>(&stored), sizeof(stored)) == sizeof(stored) && stored == crc32(samples, bytes, crc32(&hdr, sizeof(hdr)));
+  }
   f.close();
   if (ok) *n = hdr.count;
   return ok;

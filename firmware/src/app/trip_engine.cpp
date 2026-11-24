@@ -42,9 +42,9 @@ void TripEngine::startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc) {
   accel_ = Timer();
   brake_ = Brake();
   roll_ = Rolling();
-  powerAcc_ = 0;
-  powerN_ = 0;
+  powerAcc_ = powerSpanMs_ = 0;
   powerWindowStartMs_ = nowMs;
+  powerLastMs_ = 0;
   instMaxDraw_ = instMaxRegen_ = 0;
   ringHead_ = ringCount_ = 0;
   lastTraceMs_ = 0;
@@ -55,12 +55,12 @@ void TripEngine::startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc) {
 
 void TripEngine::resetSessionPeaks() { peaks_ = MotionData(); }
 
-float TripEngine::crossingMs(float v0, uint32_t t0, float v1, uint32_t t1, float target) {
-  if (v1 == v0) return (float)t1;
-  float f = (target - v0) / (v1 - v0);
+double TripEngine::crossingMs(float v0, uint32_t t0, float v1, uint32_t t1, float target) {
+  if (v1 == v0) return (double)t1;
+  double f = ((double)target - v0) / ((double)v1 - v0);
   if (f < 0) f = 0;
   if (f > 1) f = 1;
-  return (float)t0 + f * (float)(t1 - t0);
+  return (double)t0 + f * (double)(t1 - t0);
 }
 
 void TripEngine::accept(RecordId id, float value, float aux, uint32_t nowMs, float soc, float temp,
@@ -219,7 +219,7 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
         t.state = RunState::Idle;
         t.stillSinceMs = 0;
       } else if (kph >= ARM_KPH && t.lastKph < ARM_KPH) {
-        t.startMs = (uint32_t)crossingMs(t.lastKph, t.lastMs, kph, nowMs, ARM_KPH);
+        t.startMs = crossingMs(t.lastKph, t.lastMs, kph, nowMs, ARM_KPH);
         t.state = RunState::Running;
       }
       break;
@@ -230,13 +230,13 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
       }
       if (!t.crossed60 && kph >= 60.0f) {
         t.crossed60 = true;
-        float ms = crossingMs(t.lastKph, t.lastMs, kph, nowMs, 60.0f) - (float)t.startMs;
-        accept(REC_0_60, ms / 1000.0f, 0, nowMs, soc, temp, true);
+        double ms = crossingMs(t.lastKph, t.lastMs, kph, nowMs, 60.0f) - t.startMs;
+        accept(REC_0_60, (float)(ms / 1000.0), 0, nowMs, soc, temp, true);
       }
       if (!t.crossed100 && kph >= 100.0f) {
         t.crossed100 = true;
-        float ms = crossingMs(t.lastKph, t.lastMs, kph, nowMs, 100.0f) - (float)t.startMs;
-        accept(REC_0_100, ms / 1000.0f, 0, nowMs, soc, temp, true);
+        double ms = crossingMs(t.lastKph, t.lastMs, kph, nowMs, 100.0f) - t.startMs;
+        accept(REC_0_100, (float)(ms / 1000.0), 0, nowMs, soc, temp, true);
         t.state = RunState::Done;
       }
       if (kph < t.lastKph - 3.0f && !t.crossed100) t.state = RunState::Done;  // backed off: run over
@@ -247,10 +247,10 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
   if (valid && !gap) {
     if (!roll_.running && t.lastKph < 60.0f && kph >= 60.0f) {
       roll_.running = true;
-      roll_.startMs = (uint32_t)crossingMs(t.lastKph, t.lastMs, kph, nowMs, 60.0f);
+      roll_.startMs = crossingMs(t.lastKph, t.lastMs, kph, nowMs, 60.0f);
     } else if (roll_.running) {
       if (kph >= 100.0f) {
-        float s = (crossingMs(t.lastKph, t.lastMs, kph, nowMs, 100.0f) - (float)roll_.startMs) / 1000.0f;
+        float s = (float)((crossingMs(t.lastKph, t.lastMs, kph, nowMs, 100.0f) - roll_.startMs) / 1000.0);
         if (!(trip_.best60to100S > 0) || s < trip_.best60to100S) trip_.best60to100S = s;
         roll_.running = false;
       } else if (kph < t.lastKph - 2.0f || kph < 58.0f) {
@@ -268,8 +268,8 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
   if (valid && !gap) {
     if (!b.armed && t.lastKph >= BRAKE_FROM_KPH && kph < BRAKE_FROM_KPH && lonG < -0.05f) {
       b.armed = true;
-      b.startMs = (uint32_t)crossingMs(t.lastKph, t.lastMs, kph, nowMs, BRAKE_FROM_KPH);
-      float dtS = (float)(nowMs - b.startMs) / 1000.0f;
+      b.startMs = crossingMs(t.lastKph, t.lastMs, kph, nowMs, BRAKE_FROM_KPH);
+      float dtS = (float)(((double)nowMs - b.startMs) / 1000.0);
       b.distanceM = (BRAKE_FROM_KPH + kph) / 2.0f / 3.6f * dtS;
     } else if (b.armed) {
       float dtS = (float)(nowMs - b.lastMs) / 1000.0f;
@@ -277,7 +277,7 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
       if (kph > b.lastKph + 1.0f) {
         b.armed = false;  // speed rose again: not a stop
       } else if (kph < ARM_KPH) {
-        float s = (crossingMs(b.lastKph, b.lastMs, kph, nowMs, ARM_KPH) - (float)b.startMs) / 1000.0f;
+        float s = (float)((crossingMs(b.lastKph, b.lastMs, kph, nowMs, ARM_KPH) - b.startMs) / 1000.0);
         accept(REC_60_0, s, b.distanceM, nowMs, soc, temp, true);
         b.armed = false;
       }
@@ -293,22 +293,27 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
 }
 
 void TripEngine::checkPower(uint32_t nowMs, float powerKw, bool carLive, bool moving, float soc, float temp) {
-  if (!carLive) {
-    powerAcc_ = 0;
-    powerN_ = 0;
+  // No car data, the first sample, or a gap: the window starts afresh at this sample, so a
+  // reading never stands in for time it was not seen.
+  if (!carLive || powerLastMs_ == 0 || nowMs - powerLastMs_ > 500) {
+    powerAcc_ = powerSpanMs_ = 0;
+    instMaxDraw_ = instMaxRegen_ = 0;
     powerWindowStartMs_ = nowMs;
+    powerLastMs_ = carLive ? nowMs : 0;
     return;
   }
+  float dtMs = (float)(nowMs - powerLastMs_);
+  powerLastMs_ = nowMs;
+  powerAcc_ += powerKw * dtMs;  // each reading weighted by the time it stood for
+  powerSpanMs_ += dtMs;
   if (powerKw > instMaxDraw_) instMaxDraw_ = powerKw;
   if (-powerKw > instMaxRegen_) instMaxRegen_ = -powerKw;
-  powerAcc_ += powerKw;
-  powerN_++;
-  if (nowMs - powerWindowStartMs_ >= 1000 && powerN_ > 0) {
-    float mean = powerAcc_ / (float)powerN_;
+  if (nowMs - powerWindowStartMs_ >= 1000 && powerSpanMs_ > 0) {
+    float mean = powerAcc_ / powerSpanMs_;
     if (mean > 0 && moving) accept(REC_DRAW, mean, instMaxDraw_, nowMs, soc, temp, false);
     if (mean < 0 && moving) accept(REC_REGEN, -mean, instMaxRegen_, nowMs, soc, temp, false);
-    powerAcc_ = 0;
-    powerN_ = 0;
+    powerAcc_ = powerSpanMs_ = 0;
+    instMaxDraw_ = instMaxRegen_ = 0;  // the extremes belong to the second they were seen in
     powerWindowStartMs_ = nowMs;
   }
 }

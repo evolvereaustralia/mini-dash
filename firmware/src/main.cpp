@@ -349,7 +349,7 @@ void setup() {
   Sensors::setNightMode(st.nightMode);
   {
     LvLock lk;
-    Ui::setBootStatus(Sensors::gpsOk() ? "GPS acquiring" : "GPS absent", Storage::loadObdEnabled() ? "OBD scanning" : "OBD off",
+    Ui::setBootStatus(!Sensors::gpsOk() ? "GPS absent" : (Sensors::gpsConfigured() ? "GPS acquiring" : "GPS set-up failed"), Storage::loadObdEnabled() ? "OBD scanning" : "OBD off",
                       Sensors::imuOk() ? "IMU ready" : "IMU absent");
   }
   Demo::start(&g_engine);

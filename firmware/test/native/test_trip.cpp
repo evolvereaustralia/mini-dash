@@ -174,6 +174,72 @@ int main() {
   e.publish(vs);
   CHECK(vs.tripStartUtc == g_utc - 60 && vs.trip.distanceKm > 0.059f, "a late clock dates the trip without restarting it");
 
+  // --- finding 26: the power record is a time-weighted mean and carries its own second's extreme
+  {
+    static TripEngine pe;
+    static VehicleState pv;
+    g_now += 5000;
+    pe.startTrip(20, g_now, g_utc);
+    auto step = [&](uint32_t dtMs, float kw) {
+      g_now += dtMs;
+      pe.update(g_now, 50, true, 50, true, 0.2f, 12, 0, 0, true, kw, true, 60.0f, 25.0f, 40.0f);
+    };
+    step(50, 100);                                  // the first reading opens the window
+    for (int i = 0; i < 19; i++) step(50, i == 5 ? 140.0f : 100.0f);  // one second at 100 kW with a 140 kW spike
+    step(50, 100);
+    pe.publish(pv);
+    CHECK(pv.recTrip.r[REC_DRAW].valid && pv.recTrip.r[REC_DRAW].aux == 140.0f, "the first second's record carries its 140 kW spike");
+    for (int i = 0; i < 40; i++) step(50, 110);     // two steadier, higher seconds
+    pe.publish(pv);
+    CHECK(pv.recTrip.r[REC_DRAW].value > 109.0f && pv.recTrip.r[REC_DRAW].value < 111.0f, "a higher one-second mean takes the record");
+    CHECK(pv.recTrip.r[REC_DRAW].aux < 111.0f, "and its extreme is that second's own, not the earlier spike");
+    // uneven sampling: 0.1 s at 200 kW seen ten times, then 0.9 s at 20 kW seen three times
+    static TripEngine ue;
+    g_now += 5000;
+    ue.startTrip(21, g_now, g_utc);
+    auto ustep = [&](uint32_t dtMs, float kw) {
+      g_now += dtMs;
+      ue.update(g_now, 50, true, 50, true, 0.2f, 12, 0, 0, true, kw, true, 60.0f, 25.0f, 40.0f);
+    };
+    ustep(10, 200);
+    for (int i = 0; i < 10; i++) ustep(10, 200);
+    for (int i = 0; i < 3; i++) ustep(300, 20);
+    ue.publish(pv);
+    CHECK(pv.recTrip.r[REC_DRAW].valid && pv.recTrip.r[REC_DRAW].value > 36.0f && pv.recTrip.r[REC_DRAW].value < 40.0f,
+          "readings are weighted by the time they stood for (38 kW, not the 158 kW a per-sample mean gives)");
+    // a gap in the car data does not let one reading stand in for the missing time
+    static TripEngine ge;
+    g_now += 5000;
+    ge.startTrip(22, g_now, g_utc);
+    g_now += 50;
+    ge.update(g_now, 50, true, 50, true, 0.2f, 12, 0, 0, true, 150, true, 60.0f, 25.0f, 40.0f);
+    g_now += 2000;  // nothing for two seconds
+    ge.update(g_now, 50, true, 50, true, 0.2f, 12, 0, 0, true, 150, true, 60.0f, 25.0f, 40.0f);
+    ge.publish(pv);
+    CHECK(!pv.recTrip.r[REC_DRAW].valid, "two readings two seconds apart are not a one-second mean");
+  }
+
+  // --- finding 32: a timed run late in a long session keeps its precision
+  {
+    static TripEngine te;
+    static VehicleState tv;
+    uint32_t t = 30000000UL;  // 8 h 20 min of uptime: a float can no longer hold single milliseconds here
+    te.startTrip(30, t, g_utc);
+    for (int i = 0; i < 15; i++) {  // standing still with a good fix: arms after 1 s
+      t += 100;
+      te.update(t, 0, true, 0, true, 0.2f, 12, 0, 0, true, 0, false, -1, -273, 40);
+    }
+    for (int i = 1; i <= 31; i++) {  // 2 km/h more every 100 ms sample: 0.57 g, a brisk launch
+      t += 100;
+      te.update(t, i * 2.0f, true, i * 2.0f, true, 0.2f, 12, 0, 0.57f, true, 0, false, -1, -273, 40);
+    }
+    te.publish(tv);
+    // the start is the 1 km/h crossing, 50 ms into the first step; 60 km/h is reached at 3000 ms
+    CHECK(tv.recTrip.r[REC_0_60].valid, "the run is timed");
+    printf("0-60 at 8 h uptime: %.4f s (exact 2.9500)\n", tv.recTrip.r[REC_0_60].value);
+    CHECK(tv.recTrip.r[REC_0_60].value > 2.9495f && tv.recTrip.r[REC_0_60].value < 2.9505f, "to within half a millisecond");
+  }
+
   printf("trip engine: %d checks, %d failed\nRESULT: %s\n", g_checks, g_failed, g_failed ? "FAIL" : "PASS");
   return g_failed ? 1 : 0;
 }

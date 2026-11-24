@@ -80,27 +80,29 @@ class TripEngine {
   struct Timer {
     RunState state = RunState::Idle;
     uint32_t stillSinceMs = 0;
-    uint32_t startMs = 0;
+    double startMs = 0;  // interpolated, with its fraction of a millisecond
     float lastKph = 0;
     uint32_t lastMs = 0;
     bool crossed60 = false, crossed100 = false;
   } accel_;
   struct Brake {
     bool armed = false;
-    uint32_t startMs = 0;
+    double startMs = 0;
     float distanceM = 0;
     float lastKph = 0;
     uint32_t lastMs = 0;
   } brake_;
   struct Rolling {
     bool running = false;
-    uint32_t startMs = 0;
+    double startMs = 0;
   } roll_;
 
   // one-second power window
-  float powerAcc_ = 0;
-  uint32_t powerN_ = 0;
-  uint32_t powerWindowStartMs_ = 0;
+  // one-second power window: a time-weighted mean, and the extremes of that same second
+  // (review finding 26: the mean was per sample, and the extremes were the trip's, not the window's)
+  float powerAcc_ = 0;   // kW x ms
+  float powerSpanMs_ = 0;
+  uint32_t powerWindowStartMs_ = 0, powerLastMs_ = 0;
   float instMaxDraw_ = 0, instMaxRegen_ = 0;
 
   // trace ring and pending events
@@ -125,7 +127,9 @@ class TripEngine {
 
   void accept(RecordId id, float value, float aux, uint32_t nowMs, float soc, float temp,
               bool lowerIsBetter);
-  static float crossingMs(float v0, uint32_t t0, float v1, uint32_t t1, float target);
+  // Double throughout: as a float, a millisecond count loses whole milliseconds after 4.6 hours
+  // of uptime and the start time lost its fraction in a cast (review finding 32).
+  static double crossingMs(float v0, uint32_t t0, float v1, uint32_t t1, float target);
   void checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float lonG, float speedAccMps,
                         uint8_t sats, float soc, float temp);
   void checkPower(uint32_t nowMs, float powerKw, bool carLive, bool moving, float soc, float temp);

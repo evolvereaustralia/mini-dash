@@ -42,6 +42,7 @@ uint16_t gpsBytesAvailable() {  // u-blox register 0xFD/0xFE, high bit is an err
 SparkFun_ISM330DHCX g_imu;
 Adafruit_VEML7700 g_lux;
 bool g_gpsOk = false, g_imuOk = false, g_luxOk = false;
+bool g_gpsConfigOk = false;  // UBX only, 10 Hz and automatic PVT all acknowledged by the receiver
 TripEngine *g_engine = nullptr;
 
 // Mounting reference: unit gravity vector in the sensor frame at rest, stored in NVS. It only
@@ -92,12 +93,17 @@ bool gpsBegin() {
   if (!guard.ok() || !g_gnss.begin(Wire, I2C_ADDR_NEO_M9N)) return false;
   g_gnss.setI2CTransactionSize(128);  // the ESP32 Wire buffer; four times fewer transactions per packet
   g_gnss.setNMEAOutputPort(g_nmeaSink);
-  bool ubxOnly = false;
+  // Each setting is tried up to three times. A receiver that answers but refuses a setting is
+  // present and wrongly configured: at its default 1 Hz every timer run would be thrown out as
+  // a gap, with nothing on screen to say why. That is reported as its own state, not as "ok"
+  // (review finding 35).
+  bool ubxOnly = false, rate = false, autoPvt = false;
   for (int i = 0; i < 3 && !ubxOnly; i++) ubxOnly = g_gnss.setI2COutput(COM_TYPE_UBX);
-  bool rate = g_gnss.setNavigationFrequency(GPS_NAV_RATE_HZ);
-  bool autoPvt = g_gnss.setAutoPVT(true);
-  Serial.printf("GPS: I2C UBX-only %s, nav rate %s, autoPVT %s\n", ubxOnly ? "ok" : "NOT ACKED", rate ? "ok" : "NOT ACKED",
-                autoPvt ? "ok" : "NOT ACKED");
+  for (int i = 0; i < 3 && !rate; i++) rate = g_gnss.setNavigationFrequency(GPS_NAV_RATE_HZ);
+  for (int i = 0; i < 3 && !autoPvt; i++) autoPvt = g_gnss.setAutoPVT(true);
+  g_gpsConfigOk = ubxOnly && rate && autoPvt;
+  Serial.printf("GPS: I2C UBX-only %s, nav rate %s, autoPVT %s%s\n", ubxOnly ? "ok" : "NOT ACKED", rate ? "ok" : "NOT ACKED",
+                autoPvt ? "ok" : "NOT ACKED", g_gpsConfigOk ? "" : " | GPS IS NOT CONFIGURED AS REQUIRED: timers and speed fusion cannot be relied on this boot");
   return true;
 }
 
@@ -158,10 +164,14 @@ void applyBacklight() {
   if (g_nightMode == 0) pct = g_manualBrightness;
   else if (g_nightMode == 1) pct = g_manualBrightness < 60 ? g_manualBrightness : NIGHT_BACKLIGHT_PCT;
   else pct = g_night ? NIGHT_BACKLIGHT_PCT : 100;
-  IoExpander::setBacklightPercent(pct);
+  // The level is published only if the expander took it: a refused write used to leave the
+  // screen at one brightness and the state claiming another.
+  bool wrote = IoExpander::setBacklightPercent(pct);  // takes the bus lock itself (the lock is not recursive)
+  static uint32_t refused = 0;
+  if (!wrote && ++refused <= 5) Serial.printf("backlight: write of %u%% refused (%lu so far)\n", pct, (unsigned long)refused);
   VsLock lk;
   if (lk.ok()) {
-    Vs::raw().disp.backlightPct = pct;
+    if (wrote) Vs::raw().disp.backlightPct = pct;
     Vs::raw().disp.night = (g_nightMode == 1) || (g_nightMode == -1 && g_night);
   }
 }
@@ -223,7 +233,7 @@ void pollGps(uint32_t now) {
     g_gpsSpeedMs = now;
   }
   VsLock lk;
-  if (lk.ok()) Vs::raw().gps = g;
+  if (lk.ok() && !Vs::raw().demo) Vs::raw().gps = g;  // during a replay the GPS state is the replay's alone
 }
 
 void pollImu(uint32_t now) {
@@ -508,7 +518,7 @@ void start(TripEngine *engine) {
   g_gpsOk = gpsBegin();
   g_imuOk = imuBegin();
   g_luxOk = luxBegin();
-  Serial.printf("sensors: GPS %s, IMU %s, lux %s\n", g_gpsOk ? "ok" : "absent", g_imuOk ? "ok" : "absent",
+  Serial.printf("sensors: GPS %s, IMU %s, lux %s\n", !g_gpsOk ? "absent" : (g_gpsConfigOk ? "ok" : "present but NOT configured"), g_imuOk ? "ok" : "absent",
                 g_luxOk ? "ok" : "absent");
   I2cBus::resetStats();
   {
@@ -519,6 +529,7 @@ void start(TripEngine *engine) {
 }
 
 bool gpsOk() { return g_gpsOk; }
+bool gpsConfigured() { return g_gpsOk && g_gpsConfigOk; }
 bool imuOk() { return g_imuOk; }
 bool luxOk() { return g_luxOk; }
 void calibrateMounting() { g_calibrateRequest = true; }

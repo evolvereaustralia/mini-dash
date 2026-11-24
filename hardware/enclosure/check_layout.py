@@ -1,5 +1,6 @@
 """Clearance check of the shell layout against the display-back parts measured from the photo (device frame).
 Run: python3 check_layout.py   (after any change to the layout constants)"""
+import sys
 import math
 import mini_dash_enclosure as md
 import display_back_parts as dbp
@@ -67,3 +68,5 @@ for i in range(len(env)):
 worst.sort()
 print('tightest z gaps:', ', '.join(f'{g:.1f} mm {n} under {p}' for g, n, p in worst[:5]))
 print('RESULT:', 'FAIL' if bad else 'CLEAN', f'(DEPTH {md.DEPTH}, plug top {gz + 3.17 + 4.55 - Z_PCB:.1f} mm behind the PCB)')
+# Non-zero when anything clashes, so a script cannot take FAIL for CLEAN (review finding 42).
+sys.exit(1 if bad else 0)

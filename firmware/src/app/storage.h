@@ -64,6 +64,7 @@ uint32_t faultCount();  // writes that failed or were refused since boot
 // read back and removed. It never touches /trips. removeTestTrips clears the test trips older
 // firmware left in the history (ids from 900000 up); those ids are ignored when numbering trips.
 bool selfTest();
+int quarantineUnreadableTrips();  // boot: unreadable trip files renamed to <id>.bad, kept, no longer counted
 int removeTestTrips();
 uint32_t writeCount();  // flash writes (files and NVS) since boot, for the diagnostics line
 bool fsOk();

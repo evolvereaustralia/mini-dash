@@ -59,15 +59,22 @@ const char *longestHolder() { return g_longestWho; }
 void setQuiet(bool quiet) { g_quiet = quiet; }
 
 size_t scan(uint8_t *found, size_t maxFound) {
-  size_t n = 0;
-  I2cLock guard(200, "scan");
-  if (!guard.ok()) return 0;
+  // One short hold per address: 112 probes under a single hold kept touch, GPS and the IMU off
+  // the bus for the whole scan (review finding 35). An address whose turn could not get the
+  // bus is tried once more; a scan that still had to skip addresses says so.
+  size_t n = 0, skipped = 0;
   for (uint8_t addr = 0x08; addr <= 0x77 && n < maxFound; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      found[n++] = addr;
+    bool probed = false;
+    for (int attempt = 0; attempt < 2 && !probed; attempt++) {
+      I2cLock guard(50, "scan");
+      if (!guard.ok()) continue;
+      probed = true;
+      Wire.beginTransmission(addr);
+      if (Wire.endTransmission() == 0) found[n++] = addr;
     }
+    if (!probed) skipped++;
   }
+  if (skipped) Serial.printf("I2C scan: %u addresses could not be probed (bus busy); the list is incomplete\n", (unsigned)skipped);
   return n;
 }
 

@@ -6,7 +6,9 @@
 #   cd firmware && ~/.platformio/penv/bin/python tools/drive_log.py      # until Ctrl-C
 #   ~/.platformio/penv/bin/python tools/drive_log.py /dev/cu.usbmodem1101 3600
 #
-# Writes docs/drive-logs/drive-<date>-<time>.log. Resets the board at the start (so the log
+# Writes docs/drive-logs/drive-<date>-<time to the second>.log and never overwrites a log: the
+# file is opened so that an existing one is an error (two runs in the same minute used to share a
+# name and the second erased the first, review finding 30). Resets the board at the start (so the log
 # begins with the boot banner), sends 'g' after 5 s and 'O' (OBD status) once a minute. PlatformIO's own Python has pyserial;
 # the system python3 does not.
 import glob, os, sys, time
@@ -23,14 +25,14 @@ port = ports[0]
 secs = float(sys.argv[2]) if len(sys.argv) > 2 else 6 * 3600
 out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "drive-logs")
 os.makedirs(out_dir, exist_ok=True)
-path = os.path.join(out_dir, datetime.now().strftime("drive-%Y-%m-%d-%H%M.log"))
+path = os.path.join(out_dir, datetime.now().strftime("drive-%Y-%m-%d-%H%M%S.log"))
 s = serial.Serial(port, 115200, timeout=0.2)
 s.dtr = False; s.rts = True; time.sleep(0.1); s.rts = False; s.dtr = True
 t0 = time.time()
 sent = False
 last_status = time.time()
 print(f"logging {port} to {path}; Ctrl-C to stop")
-with open(path, "wb") as f:
+with open(path, "xb") as f:  # x: fail rather than overwrite
     try:
         while time.time() - t0 < secs:
             if not sent and time.time() - t0 >= 5:

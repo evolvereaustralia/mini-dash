@@ -71,6 +71,7 @@ void demoTask(void *) {
         // Leaving the demo: the car data was synthetic, so drop it.
         VehicleState &vs = Vs::raw();
         vs.car = CarData();
+        vs.gps = GpsData();  // the synthetic fix must not feed the real trip until the receiver's next epoch replaces it
         vs.motion = MotionData();
         vs.disp.speedSource = SpeedSource::None;
         vs.demo = false;

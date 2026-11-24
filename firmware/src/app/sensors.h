@@ -19,6 +19,7 @@ namespace Sensors {
 void start(TripEngine *engine);
 
 bool gpsOk();
+bool gpsConfigured();  // present and every setting acknowledged; false means its figures are not to be relied on
 bool imuOk();
 bool luxOk();
 

@@ -398,6 +398,7 @@ void begin(TripEngine *engine) {
   g_tripWrites = false;
   Serial.println("persist: CAPTURE build, no trip, record or trace is written; stored trips are left untouched");
 #else
+  Storage::quarantineUnreadableTrips();
   recoverCheckpoints();
   Storage::pruneOrphanEvents();  // traces of demo and discarded trips; trips waiting in /active keep theirs
 #endif
