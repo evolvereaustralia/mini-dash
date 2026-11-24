@@ -1,5 +1,7 @@
 #include "obd_client.h"
 
+#include "capture.h"
+
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <freertos/FreeRTOS.h>
@@ -119,7 +121,10 @@ void onNotify(BLERemoteCharacteristic *, uint8_t *data, size_t len, bool) {
 }
 
 void setState(uint8_t s) {
-  if (g_state != s) Serial.printf("OBD: %s\n", Obd::stateName(s));
+  if (g_state != s) {
+    Serial.printf("OBD: %s\n", Obd::stateName(s));
+    Capture::push('B', s, 0);
+  }
   g_state = s;
 }
 
@@ -817,7 +822,10 @@ void obdTask(void *) {
       }
     }
     PollItem &it = g_items[idx];
+    uint32_t capT0 = millis();
     Outcome o = request(it);
+    Capture::push('O', it.ecu, it.did, (int32_t)(millis() - capT0), (int32_t)o, it.frames, g_state);
+    Capture::stackMark(2);
     // While the shared receive filter is on trial, a failure is put to the question directly:
     // the same identifier again with this ECU's own filter. Only if that succeeds is the
     // shared filter the cause, and it is then dropped for this connection (finding 16).

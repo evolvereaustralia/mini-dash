@@ -120,6 +120,7 @@ class TripEngine {
   bool lifetimeDirty_ = false;
   bool eligible_ = false, eligibleEvent_ = false;
   bool captureOnly_ = false;
+  float capLat_ = 0;  // capture mode: the largest lateral peak already logged this trip, so each sample is not logged again
   CandidateLog candidateLog_ = nullptr;
   void promote();
   uint32_t tripId_ = 0, startUtc_ = 0, startMs_ = 0;

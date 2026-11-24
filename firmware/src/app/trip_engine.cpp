@@ -32,6 +32,7 @@ void stampWhen(Record &r, bool dateNotTime) {
 
 void TripEngine::startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc) {
   movingKm_ = 0;
+  capLat_ = 0;
   eligible_ = eligibleEvent_ = false;
   tripId_ = tripId;
   startUtc_ = startUtc;
@@ -361,7 +362,11 @@ void TripEngine::update(uint32_t nowMs, float speedKph, bool speedValid, float t
     if (lonG > 0 && lonG > peaks_.peakAccel) peaks_.peakAccel = lonG;
     if (lonG < 0 && -lonG > peaks_.peakBrake) peaks_.peakBrake = -lonG;
     float lat = fabsf(latG);
-    if (moving && lat > 0.15f && (!session_.r[REC_LAT].valid || lat > session_.r[REC_LAT].value)) {
+    // In capture mode nothing becomes a record, so the peak already logged is kept apart;
+    // without it every sample of a corner would be logged as a new candidate.
+    float best = captureOnly_ ? capLat_ : (session_.r[REC_LAT].valid ? session_.r[REC_LAT].value : 0.0f);
+    if (moving && lat > 0.15f && lat > best) {
+      if (captureOnly_) capLat_ = lat;
       accept(REC_LAT, lat, latG, nowMs, socPct, packTemp, false);
     }
   }

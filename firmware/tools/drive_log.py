@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Record the device's serial output during a drive, with the 10 Hz motion log switched on,
-# so the drive can be analysed afterwards (docs/calibration.md, road checks). The device is
+# Record the device's serial output during a drive, with the raw capture stream switched on
+# (src/app/capture.h: every GPS epoch, IMU sample, gate decision and OBD exchange), so the
+# drive can be analysed and replayed afterwards with tools/capture_parse.py. The device is
 # powered and logged over the one USB cable from the Mac on the passenger seat.
 #
 #   cd firmware && ~/.platformio/penv/bin/python tools/drive_log.py      # until Ctrl-C
@@ -9,7 +10,8 @@
 # Writes docs/drive-logs/drive-<date>-<time to the second>.log and never overwrites a log: the
 # file is opened so that an existing one is an error (two runs in the same minute used to share a
 # name and the second erased the first, review finding 30). Resets the board at the start (so the log
-# begins with the boot banner), sends 'g' after 5 s and 'O' (OBD status) once a minute. PlatformIO's own Python has pyserial;
+# begins with the boot banner), sends 'C' (start the capture stream) after 5 s and 'O' (OBD status)
+# once a minute, and 'U' (stop the stream) when it ends. About 14 KB a second, 50 MB an hour. PlatformIO's own Python has pyserial;
 # the system python3 does not.
 import glob, os, sys, time
 from datetime import datetime
@@ -36,7 +38,7 @@ with open(path, "xb") as f:  # x: fail rather than overwrite
     try:
         while time.time() - t0 < secs:
             if not sent and time.time() - t0 >= 5:
-                s.write(b"g"); sent = True
+                s.write(b"C"); sent = True
             if time.time() - last_status >= 60:  # OBD rates and per-identifier counts once a minute
                 s.write(b"O"); last_status = time.time()
             data = s.read(4096)
@@ -44,6 +46,16 @@ with open(path, "xb") as f:  # x: fail rather than overwrite
                 f.write(data); f.flush()
     except KeyboardInterrupt:
         pass
+    try:  # stop the stream and take what is still on its way
+        s.write(b"U")
+        end = time.time() + 1.0
+        while time.time() < end:
+            data = s.read(4096)
+            if data:
+                f.write(data)
+    except Exception:
+        pass
 s.close()
 size = os.path.getsize(path)
 print(f"stopped after {int(time.time() - t0)} s, {size // 1024} KB in {path}")
+print(f"next: python3 tools/capture_parse.py {path}")

@@ -38,7 +38,7 @@ constexpr float ELIGIBLE_KM = 0.05f;             // a trip of 50 m or more is ke
 
 TripEngine *g_engine = nullptr;
 Storage::Settings g_settings;
-bool g_ready = false;
+bool g_ready = false, g_capture = false;
 volatile bool g_suppress = WRITES_STALL_PANEL;    // hold back traces and checkpoints (prebuilt core default)
 volatile bool g_immediate = !WRITES_STALL_PANEL;  // write without waiting for a standstill
 volatile bool g_tripWrites = true;
@@ -326,11 +326,10 @@ void handleRequests(uint32_t nowMs) {
   }
   if (g_demoPending) {
     bool on = g_demoTarget;
-#ifdef MINIDASH_CAPTURE
-    g_demoPending = false;  // the replay has no place in a capture drive
-    (void)on;
-#else
-    if (on == Demo::enabled()) {
+    if (g_capture) {
+      g_demoPending = false;  // the replay has no place in a capture drive
+      Serial.println("replay: not available in capture mode (serial MM leaves it)");
+    } else if (on == Demo::enabled()) {
       g_demoPending = false;
     } else {
       // Leaving the replay: stop the source first and let its last update land, so no synthetic
@@ -348,7 +347,6 @@ void handleRequests(uint32_t nowMs) {
         Demo::setEnabled(true);  // could not rotate: stay as we were and try again
       }
     }
-#endif
   }
   if (g_resetPending && rotateTrip(Demo::enabled())) g_resetPending = false;
   (void)nowMs;
@@ -390,18 +388,21 @@ const Storage::Settings &loadSettings() {
   return g_settings;
 }
 
-void begin(TripEngine *engine) {
+const Storage::Settings &settings() { return g_settings; }
+
+void begin(TripEngine *engine, bool captureMode) {
   g_engine = engine;
   g_slotMutex = xSemaphoreCreateMutex();
   if (!g_slotMutex) Serial.println("persist: no memory for the trace mutex; traces will not be stored");
-#ifdef MINIDASH_CAPTURE
-  g_tripWrites = false;
-  Serial.println("persist: CAPTURE build, no trip, record or trace is written; stored trips are left untouched");
-#else
-  Storage::quarantineUnreadableTrips();
-  recoverCheckpoints();
-  Storage::pruneOrphanEvents();  // traces of demo and discarded trips; trips waiting in /active keep theirs
-#endif
+  g_capture = captureMode;
+  if (g_capture) {
+    g_tripWrites = false;
+    Serial.println("persist: CAPTURE MODE, no trip, record or trace is written; what is stored is left untouched");
+  } else {
+    Storage::quarantineUnreadableTrips();
+    recoverCheckpoints();
+    Storage::pruneOrphanEvents();  // traces of demo and discarded trips; trips waiting in /active keep theirs
+  }
   RecordSet lifetime;
   Storage::loadLifetime(lifetime);
   g_engine->setLifetime(lifetime);

@@ -22,7 +22,10 @@ namespace Persist {
 
 // Setup, in this order, before the sensor and demo tasks exist.
 const Storage::Settings &loadSettings();
-void begin(TripEngine *engine);  // archives checkpoints left by power cuts, loads the lifetime set
+const Storage::Settings &settings();  // as last loaded or stored; loop task
+// Archives checkpoints left by power cuts and loads the lifetime set. In capture mode nothing
+// stored is touched: no recovery, no pruning, and no trip, record or trace is written after.
+void begin(TripEngine *engine, bool captureMode);
 void startFirstTrip();
 
 void service(uint32_t nowMs);  // loop task

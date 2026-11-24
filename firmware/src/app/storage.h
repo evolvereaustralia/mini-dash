@@ -85,6 +85,9 @@ int listActive(uint32_t *ids, int max);  // checkpoints waiting in /active, asce
 
 // OBD: on/off and the paired dongle (address as text, BLE address type). Separate keys, not
 // part of the settings blob, so pairing never touches the calibration.
+// Capture mode (capture.h): on until the timers have been checked against a logged drive.
+bool loadCaptureMode();
+bool saveCaptureMode(bool on);
 // The car's forward axis in the IMU frame (board_config.h IMU_AXES), likewise its own key.
 uint8_t loadForwardAxis(uint8_t fallback);
 bool saveForwardAxis(uint8_t axis);

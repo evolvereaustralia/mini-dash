@@ -127,6 +127,7 @@ int main() {
   drive(e, 40, 300, 1.60f, 100.0f, true);
   e.publish(vs);
   CHECK(g_candidates > 0, "capture: candidates are logged");
+  CHECK(g_candidates < 60, "capture: a steady corner is one lateral candidate, not one per sample");
   CHECK(!vs.recTrip.r[REC_LAT].valid && !vs.recTrip.r[REC_DRAW].valid, "capture: nothing is recorded for the trip");
   CHECK(vs.recAll.r[REC_LAT].value == allBefore.r[REC_LAT].value, "capture: lifetime unchanged");
   CHECK(!e.takeLifetimeIfDirty(out), "capture: nothing marked for writing");

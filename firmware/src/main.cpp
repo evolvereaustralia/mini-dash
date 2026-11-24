@@ -4,6 +4,7 @@
 //
 // Serial keys: d = demo on/off, 1..9 and 0 = backlight 10..100 %, p = screenshot (base64
 // RGB565, decode with tools/screenshot.py), n = next tab, D R Y E B = a page, x = settings, i = I2C scan, r = reboot.
+// Capture: C = start the raw stream, U = stop it, MM = switch capture mode / normal mode (stored, restarts).
 // Storage: W = self-test of the safe write path, KK = format the trip partition (the only way it is
 // ever formatted once it holds data), X = remove old test trips. The rest are in firmware/README.md.
 
@@ -13,6 +14,7 @@
 
 #include "esp_heap_caps.h"
 
+#include "app/capture.h"
 #include "app/clock.h"
 #include "app/demo_source.h"
 #include "app/lvgl_port.h"
@@ -31,11 +33,30 @@
 #include "vehicle_state.h"
 
 namespace {
-constexpr const char *VERSION = "0.3b";
+constexpr const char *VERSION = "0.4";  // 0.4: the independent review's fixes, capture mode (24 Nov 2026)
 TripEngine g_engine;
 esp_lcd_panel_handle_t g_panel = nullptr;
 bool g_touchOk = false;
 volatile bool g_motionLog = false;
+
+// Timer runs and peaks as the engine judges them, into the capture stream. In capture mode this
+// is all that happens to them; otherwise they are logged and recorded.
+void candidateLog(int rec, float value, float aux, uint32_t nowMs) {
+  Capture::push('C', (uint8_t)rec, 0, (int32_t)lroundf(value * 1000.0f), (int32_t)lroundf(aux * 1000.0f), (int32_t)nowMs);
+}
+// What a replay of the log needs to know about this unit, as one line.
+void captureConfigLine() {
+  const Storage::Settings &st = Persist::settings();
+  float ref[3] = {0, 0, 0};
+  bool mounted = Sensors::mountingRef(ref);
+  Serial.printf("~K,%lu,ms=%lu,fw=%s,built=%s %s,mode=%s,fwd=%s,acccal=%d,accoff_ug=%ld/%ld/%ld,accradius_ug=%ld,mountref=%d,gref_e6=%ld/%ld/%ld,"
+                "gpslat_ms=%d,imu_hz=%u,gps_hz=%u,dropped=%lu,written=%lu\n",
+                (unsigned long)micros(), (unsigned long)millis(), VERSION, __DATE__, __TIME__, Capture::mode() ? "capture" : "normal",
+                IMU_AXIS_NAMES[Sensors::forwardAxis() < 6 ? Sensors::forwardAxis() : 0], st.accCalibrated,
+                lroundf(st.accOffset[0] * 1e6f), lroundf(st.accOffset[1] * 1e6f), lroundf(st.accOffset[2] * 1e6f), lroundf(st.accRadius * 1e6f),
+                mounted, lroundf(ref[0] * 1e6f), lroundf(ref[1] * 1e6f), lroundf(ref[2] * 1e6f), 100, (unsigned)IMU_ODR_HZ,
+                (unsigned)GPS_NAV_RATE_HZ, (unsigned long)Capture::dropped(), (unsigned long)Capture::written());
+}
 
 // Nothing in this file writes trips, records, traces or settings: app/persist.* owns those
 // writes on this task, and the UI callbacks below only leave it requests.
@@ -248,6 +269,29 @@ void handleSerial() {
     } else if (ch == 'P') {  // pair with a dongle now, as the Settings button (only when none is stored)
       Obd::requestPairing();
       Serial.println(Obd::paired() ? "OBD: a dongle is already paired; F forgets it" : "OBD: pairing for 30 s");
+    } else if (ch == 'C') {  // start the capture stream (tools/drive_log.py sends this); U stops it
+      Capture::setStreaming(true);
+      Serial.printf("capture: stream %s\n", Capture::streaming() ? "on" : "UNAVAILABLE (no ring)");
+    } else if (ch == 'U') {
+      Capture::setStreaming(false);
+      Serial.printf("capture: stream off, %lu records written, %lu dropped\n", (unsigned long)Capture::written(), (unsigned long)Capture::dropped());
+    } else if (ch == 'M') {  // MM within 3 s: switch between capture mode and normal mode, stored, then restart
+      static uint32_t firstM = 0;
+      if (firstM && millis() - firstM < 3000) {
+        bool to = !Capture::mode();
+        if (Storage::saveCaptureMode(to)) {
+          Serial.printf("mode: %s from the next boot; restarting\n", to ? "capture" : "normal");
+          delay(200);
+          ESP.restart();
+        } else {
+          Serial.println("mode: could NOT be stored; unchanged");
+        }
+        firstM = 0;
+      } else {
+        firstM = millis();
+        Serial.printf("mode: now %s; M again within 3 s switches to %s and restarts\n", Capture::mode() ? "capture" : "normal",
+                      Capture::mode() ? "normal (records and trips stored)" : "capture (nothing recorded or stored)");
+      }
     } else if (ch == 'A') {  // the car's forward axis in the IMU frame: cycles +X -X +Y -Y +Z -Z and stores it
       uint8_t axis = (Sensors::forwardAxis() + 1) % 6;
       Sensors::setForwardAxis(axis);
@@ -270,6 +314,7 @@ void handleSerial() {
 }  // namespace
 
 void setup() {
+  Serial.setTxBufferSize(16384);  // the capture stream is about 14 KB a second
   Serial.begin(115200);
   uint32_t t0 = millis();
   Vs::begin();
@@ -341,8 +386,20 @@ void setup() {
   if (st.accCalibrated) Sensors::setAccelCal(st.accOffset, st.accRadius);
   if (st.calibrated) Sensors::setMountingRef(st.gRef);
   Sensors::setForwardAxis(Storage::loadForwardAxis(IMU_FORWARD_AXIS_DEFAULT));
+  // Capture mode (app/capture.h): on by default until the timers have been checked against a
+  // logged drive. Runs are logged as candidates, nothing is recorded, nothing stored is touched.
+  bool captureMode = Storage::loadCaptureMode();
+  Capture::begin();
+  Capture::setMode(captureMode);
+  g_engine.setCaptureOnly(captureMode, candidateLog);
+  {
+    VsLock lk;
+    if (lk.ok()) Vs::raw().capture = captureMode;
+  }
+  Serial.printf("mode: %s\n", captureMode ? "CAPTURE (runs logged, nothing recorded or stored; serial MM switches to normal)"
+                                           : "normal (records and trips stored; serial MM switches to capture)");
   // Checkpoints left by power cuts are archived here, before any task that could write exists.
-  Persist::begin(&g_engine);
+  Persist::begin(&g_engine, captureMode);
 
   // Sensors and the trip engine come up behind the splash.
   Sensors::start(&g_engine);
@@ -354,9 +411,7 @@ void setup() {
   }
   Demo::start(&g_engine);
   Obd::start();  // its own task; Bluetooth comes up there, never in the way of the screen
-#ifndef MINIDASH_CAPTURE
-  Demo::setEnabled(st.demo);  // stored; off by default, Settings turns the replay on for the bench
-#endif
+  if (!captureMode) Demo::setEnabled(st.demo);  // stored; off by default, Settings turns the replay on for the bench
   Persist::startFirstTrip();
   Serial.println("keys: d demo, 1..9/0 backlight, p screenshot, n next tab, D/R/Y/E/B page, x settings, i scan, r reboot");
 }
@@ -365,6 +420,15 @@ void loop() {
   handleSerial();
   uint32_t nowMs = millis();
   Persist::service(nowMs);  // every flash write for trips, records, traces and settings happens in here
+  if (Capture::streaming()) {
+    static uint32_t lastConfig = 0;
+    if (lastConfig == 0 || nowMs - lastConfig >= 60000) {
+      lastConfig = nowMs ? nowMs : 1;
+      captureConfigLine();
+    }
+    Capture::stackMark(0);
+    Capture::drain();
+  }
   static uint32_t lastMotion = 0;
   if (g_motionLog && millis() - lastMotion >= 100) {
     lastMotion = millis();
@@ -385,12 +449,12 @@ void loop() {
     Ui::timing(&tk, &pl);
     uint32_t gm, gb, gn, ga;
     Sensors::gpsStats(&gm, &gb, &gn, &ga);
-    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B refused %lu | obd %s %.1f Hz soc %.0f %% | att tilt %.1f corr %.3f bias %.2f dps lonbias %+.3f %s%s | flash writes %lu faults %lu pending %d%s | loop stack free %u | heap %lu psram %lu i2c %lu ms by %s\n",
+    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B refused %lu | obd %s %.1f Hz soc %.0f %% | att tilt %.1f corr %.3f bias %.2f dps lonbias %+.3f %s%s | flash writes %lu faults %lu pending %d%s | %s%s%lu rec %lu dropped | loop stack free %u | heap %lu psram %lu i2c %lu ms by %s\n",
                   (unsigned long)(millis() / 1000), (int)Ui::page(), vs.demo, vs.disp.speedKph, vs.motion.latG,
                   vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz, vs.disp.lux,
                   vs.disp.night ? "night" : "day", vs.disp.backlightPct,
                   (unsigned long)LvglPort::frameCount(), (unsigned long)fl, (unsigned long)wt, (unsigned long)to,
-                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), Obd::stateName(vs.diag.obdState), vs.diag.obdHz, vs.car.socPct, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.fwdAxisBad ? "FORWARD AXIS NEAR VERTICAL" : (vs.diag.attTrust ? "trust" : (vs.diag.attTurnHold ? "hold (turn)" : "hold")), vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)Storage::faultCount(), Persist::pendingRecovery(), Storage::needsOwner() ? " STORAGE NEEDS KK" : "", (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
+                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), Obd::stateName(vs.diag.obdState), vs.diag.obdHz, vs.car.socPct, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.fwdAxisBad ? "FORWARD AXIS NEAR VERTICAL" : (vs.diag.attTrust ? "trust" : (vs.diag.attTurnHold ? "hold (turn)" : "hold")), vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)Storage::faultCount(), Persist::pendingRecovery(), Storage::needsOwner() ? " STORAGE NEEDS KK" : "", Capture::mode() ? "CAPTURE MODE " : "normal mode ", Capture::streaming() ? "streaming " : "", (unsigned long)Capture::written(), (unsigned long)Capture::dropped(), (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
                   (unsigned long)I2cBus::longestHoldMs(), I2cBus::longestHolder());
   }
   delay(10);

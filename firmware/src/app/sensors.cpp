@@ -11,6 +11,7 @@
 #include "attitude.h"
 #include "board_config.h"
 #include "clock.h"
+#include "capture.h"
 #include "demo_source.h"
 #include "i2c_bus.h"
 #include "io_expander.h"
@@ -220,6 +221,11 @@ void pollGps(uint32_t now) {
     g.minute = g_gnss.getMinute();
     g.second = g_gnss.getSecond();
   }  // the bus is released here: the RTC write below takes its own lock
+  // Capture: every PVT as it arrived, repeats and fixless ones included, with its arrival time.
+  // Position is deliberately not captured: the logs may be shared and the repository is public.
+  Capture::push('G', g.sats, (uint16_t)((g.fixType & 0x0F) | (g.fixOk ? 0x10 : 0) | (g.timeValid ? 0x20 : 0) | ((g_haveEpoch && g.iTOW == g_lastEpoch) ? 0x40 : 0)),
+                (int32_t)g.iTOW, (int32_t)lroundf(g.speedMps * 1000.0f), (int32_t)lroundf(g.hAccM * 1000.0f), (int32_t)lroundf(g.altM * 100.0f),
+                (int32_t)lroundf(g.speedAccMps * 1000.0f), (int32_t)lroundf(g.headingDeg * 100.0f));
   if (g.timeValid && g.fixOk) Clock::setFromGps(g.year, g.month, g.day, g.hour, g.minute, g.second);
   // One distinct receiver epoch at a time: a repeated iTOW teaches nothing and must not count
   // as another tenth of a second of evidence (review finding 01 and its notes).
@@ -247,6 +253,8 @@ void pollImu(uint32_t now) {
   float dt = g_lastImuUs ? (float)(us - g_lastImuUs) * 1e-6f : 1.0f / IMU_ODR_HZ;
   g_lastImuUs = us;
   float raw[3] = {a.xData / 1000.0f, a.yData / 1000.0f, a.zData / 1000.0f};
+  Capture::pushAt(us, 'I', 0, 0, (int32_t)lroundf(a.xData * 1000.0f), (int32_t)lroundf(a.yData * 1000.0f), (int32_t)lroundf(a.zData * 1000.0f),
+                  (int32_t)lroundf(w.xData * 10.0f), (int32_t)lroundf(w.yData * 10.0f), (int32_t)lroundf(w.zData * 10.0f));
   float acc[3] = {(raw[0] - g_accOff[0]) / g_accRadius, (raw[1] - g_accOff[1]) / g_accRadius, (raw[2] - g_accOff[2]) / g_accRadius};
   float gyr[3] = {w.xData / 1000.0f, w.yData / 1000.0f, w.zData / 1000.0f};
   if (g_calibrateRequest) {
@@ -371,6 +379,15 @@ void pollImu(uint32_t now) {
     g_fusion.imuStep(lon, us);
   }
   float yaw = g_att.yawRateDps(gyr);
+  static uint8_t capN = 0;
+  if (++capN >= 10) {
+    capN = 0;
+    float wnClip = wn > 6000.0f ? 6000.0f : wn;
+    Capture::pushAt(us, 'A', (uint8_t)((trust ? 1 : 0) | (atRest ? 2 : 0) | (turning ? 4 : 0) | (gpsStill ? 8 : 0) | (plausible ? 16 : 0) |
+                                       (steady ? 32 : 0) | (frameOk ? 64 : 0) | (gpsFresh ? 128 : 0)),
+                    (uint16_t)lroundf(wnClip * 10.0f), (int32_t)lroundf(lon * 1e6f), (int32_t)lroundf(lat * 1e6f), (int32_t)lroundf(yaw * 1000.0f),
+                    (int32_t)lroundf(g_fusion.speedMps() * 1000.0f), (int32_t)lroundf(g_turn.centripetalG() * 1e6f), (int32_t)lroundf(an * 1e6f));
+  }
 
   VsLock lk(5);
   if (!lk.ok()) return;
@@ -471,8 +488,21 @@ void sensorTask(void *) {
                          vs.motion.latG, vs.motion.lonG, motionFresh, vs.car.powerKw, carFresh, socFresh ? vs.car.socPct : -1.0f,
                          tempFresh ? vs.car.tempAvg : -273.0f, vs.gps.altM);
         g_engine->publish(vs);
+        if (Capture::streaming()) {
+          float gb[3];
+          g_att.gyroBias(gb);
+          Capture::push('S', (uint8_t)((gpsFresh ? 1 : 0) | (wheelsFresh ? 2 : 0) | (carFresh ? 4 : 0) | (motionFresh ? 8 : 0) | (socFresh ? 16 : 0) |
+                                       (vs.disp.speedSource == SpeedSource::Wheels ? 32 : 0)),
+                        vs.gps.sats, (int32_t)lroundf(kph * 1000.0f), (int32_t)lroundf(rawKph * 1000.0f),
+                        wheelsFresh ? (int32_t)lroundf(vs.car.wheelAvgKph * 1000.0f) : -1, carFresh ? (int32_t)lroundf(vs.car.powerKw * 1000.0f) : 0,
+                        socFresh ? (int32_t)lroundf(vs.car.socPct * 100.0f) : -1, (int32_t)lroundf(vs.trip.distanceKm * 100000.0f));
+          Capture::push('F', 0, 0, (int32_t)lroundf(g_latLp * 1e6f), (int32_t)lroundf(g_lonLp * 1e6f), (int32_t)lroundf(g_att.tiltDeg() * 100.0f),
+                        (int32_t)lroundf(g_att.restNorm() * 1e6f), (int32_t)lroundf(sqrtf(gb[0] * gb[0] + gb[1] * gb[1] + gb[2] * gb[2]) * 1000.0f),
+                        (int32_t)lroundf(g_fusion.lonBiasG() * 1e6f));
+        }
       }
     }
+    Capture::stackMark(1);
     if (now - lastRate >= 1000) {
       VsLock lk;
       if (lk.ok()) {

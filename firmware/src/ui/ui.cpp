@@ -1,5 +1,7 @@
 #include "ui.h"
 
+#include "../app/capture.h"
+
 #include <Arduino.h>
 #include <math.h>
 #include <stdio.h>
@@ -522,7 +524,8 @@ void updateTrip() {
   const RecordSet &rs = scopeSet();
   if (T.scopeIdx == 0) {
     uint32_t mins = (g_now - g_vs.trip.startMs) / 60000;
-    setTextF(T.ctx, "%s · %lu min · %.1f km", g_vs.demo ? "Demo replay" : "This trip", (unsigned long)mins, g_vs.trip.distanceKm);
+    if (g_vs.capture) setTextF(T.ctx, "Capture mode · runs are logged, not recorded · %lu min · %.1f km", (unsigned long)mins, g_vs.trip.distanceKm);
+    else setTextF(T.ctx, "%s · %lu min · %.1f km", g_vs.demo ? "Demo replay" : "This trip", (unsigned long)mins, g_vs.trip.distanceKm);
   } else if (T.scopeIdx == 1) {
     setTextF(T.ctx, "Today · %u earlier trip%s · %.1f km before this one", g_vs.store.todayTrips,
              g_vs.store.todayTrips == 1 ? "" : "s", g_vs.store.todayKm);
@@ -999,7 +1002,7 @@ void updateSettings() {
   if (os == 4) setTextF(G.diag, "GPS %d · IMU %.0f Hz · OBD %.1f Hz", g_vs.gps.sats, g_vs.imu.rateHz, g_vs.diag.obdHz);
   else setTextF(G.diag, "GPS %d · IMU %.0f Hz · OBD %s", g_vs.gps.sats, g_vs.imu.rateHz, OBD_WORD[os]);
   setTextF(G.bright, "%s · %u %%", g_nightMode == -1 ? "Auto" : "Manual", g_vs.disp.backlightPct);
-  setTextF(G.about, "Mini Dash %s · touch %s", g_version, g_vs.diag.touchId);
+  setTextF(G.about, "Mini Dash %s%s · touch %s", g_version, g_vs.capture ? " · capture mode" : "", g_vs.diag.touchId);
   if (g_vs.store.fsOk) {
     setTextF(G.dongle, "%u trips · %lu of %lu KB", g_vs.store.storedTrips, (unsigned long)g_vs.store.usedKb,
              (unsigned long)g_vs.store.totalKb);
@@ -1140,6 +1143,7 @@ void tickCb(lv_timer_t *) {
   }
   updateHeader();
   sampleCharts();
+  Capture::stackMark(3);
   switch (g_page) {
     case Ui::PAGE_DRIVE: updateDrive(); break;
     case Ui::PAGE_TRIP: updateTrip(); break;

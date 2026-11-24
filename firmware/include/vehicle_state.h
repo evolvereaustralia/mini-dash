@@ -171,6 +171,7 @@ struct VehicleState {
   uint32_t tripId = 0;
   uint32_t tripStartUtc = 0;
   bool demo = false;  // demo replay is the source of speed, motion and car data
+  bool capture = false;  // capture mode: runs are logged, nothing is recorded or stored (capture.h)
   bool sensorsReady = false;
 };
 

@@ -14,3 +14,8 @@ firmware/managed_components/
 firmware/dependencies.lock
 firmware/CMakeLists.txt
 firmware/sdkconfig*
+
+# Capture logs from tools/drive_log.py (named to the second) run to 50 MB an hour, and the
+# folders capture_parse.py makes beside them are derived: neither belongs in the repository.
+docs/drive-logs/drive-????-??-??-??????.log
+docs/drive-logs/*-capture/
