@@ -66,6 +66,8 @@ uint32_t g_lastImuUs = 0, g_attStartMs = 0;
 float g_gpsSpeed = 0, g_gpsSpeedHist[10] = {};
 int g_gpsSpeedIdx = 0;
 uint32_t g_gpsSpeedMs = 0;
+uint32_t g_lastEpoch = 0;
+bool g_haveEpoch = false;
 bool g_attTrust = false, g_attStationary = false;
 float g_accNorm = 1, g_gyrNorm = 0;
 
@@ -203,8 +205,12 @@ void pollGps(uint32_t now) {
     g.second = g_gnss.getSecond();
   }  // the bus is released here: the RTC write below takes its own lock
   if (g.timeValid && g.fixOk) Clock::setFromGps(g.year, g.month, g.day, g.hour, g.minute, g.second);
-  if (g.fixOk) {
-    g_fusion.gpsSample(g.speedMps);
+  // One distinct receiver epoch at a time: a repeated iTOW teaches nothing and must not count
+  // as another tenth of a second of evidence (review finding 01 and its notes).
+  if (g.fixOk && (!g_haveEpoch || g.iTOW != g_lastEpoch)) {
+    g_haveEpoch = true;
+    g_lastEpoch = g.iTOW;
+    g_fusion.gpsSample(g.speedMps, g.iTOW, micros());
     g_gpsSpeed = g.speedMps;
     g_gpsSpeedHist[g_gpsSpeedIdx] = g.speedMps;
     g_gpsSpeedIdx = (g_gpsSpeedIdx + 1) % 10;
@@ -312,7 +318,7 @@ void pollImu(uint32_t now) {
   vehicleFrameG(acc, up, IMU_FORWARD_SENSOR, &lon, &lat);
   g_latLp += LP_ALPHA * (lat - g_latLp);
   g_lonLp += LP_ALPHA * (lon - g_lonLp);
-  g_fusion.imuStep(lon, dt);
+  g_fusion.imuStep(lon, us);
   float yaw = g_att.yawRateDps(gyr);
 
   VsLock lk(5);

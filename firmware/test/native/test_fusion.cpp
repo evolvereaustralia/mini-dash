@@ -159,8 +159,10 @@ int main() {
     vehicleFrameG(a, up, forward, &lon, &lat);
     lpLon += 0.14f * (lon - lpLon);
     lpLat += 0.14f * (lat - lpLat);
-    fus.imuStep(lon, dt);
-    if (gpsFresh) fus.gpsSample(gpsSpeed);
+    uint32_t nowUs = (uint32_t)((double)step * 1e6 / 208.0);
+    fus.imuStep(lon, nowUs);
+    // the receiver measured 100 ms before this sample arrives; its epoch says so
+    if (gpsFresh) fus.gpsSample(gpsSpeed, (uint32_t)(500000 + (long)lround((t - 0.1) * 1000.0)), nowUs);
 
     // --- Scoring (after the boot convergence) ---
     if (t > 4.0f) {
