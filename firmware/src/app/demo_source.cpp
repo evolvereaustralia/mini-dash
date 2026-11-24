@@ -130,8 +130,9 @@ void demoTask(void *) {
       vs.motion.yawDps = latG * 9.81f / (v > 1 ? v : 1) * 57.3f * (v > 1 ? 1 : 0);
       vs.car.linked = true;
       vs.car.asleep = false;
-      vs.car.fastStampMs = now;
-      vs.car.slowStampMs = now;
+      vs.car.fastStampMs = vs.car.voltsStampMs = vs.car.ampsStampMs = now;
+      vs.car.socStampMs = vs.car.tempStampMs = vs.car.cellStampMs = vs.car.motorTempStampMs = now;
+      vs.car.v12StampMs = vs.car.rangeStampMs = vs.car.sohStampMs = vs.car.pedalStampMs = now;
       vs.car.socPct = g_soc;
       vs.car.socRawPct = g_soc;
       vs.car.wheelStampMs = now;

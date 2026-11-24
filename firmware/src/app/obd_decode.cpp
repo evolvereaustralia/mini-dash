@@ -22,15 +22,20 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
     float v = u16(p, 0) / 100.0f;
     if (!in(v, 150.0f, 450.0f)) return false;  // 96 cells: 240 V empty, 403 V full
     car.packV = v;
-    return true;  // the fast stamp goes with the current, which completes the power figure
+    car.voltsStampMs = nowMs;
+    return true;  // the power stamp goes with the current, which completes the figure
   }
   if (ecu == ECU_SME && did == DID_SME_AMPS) {
     if (n < 4) return false;
-    float a = -((int32_t)u32(p, 0)) / 100.0f;  // the car counts charging positive; we count discharge
+    // The car counts charging positive; we count discharge. Negated as a double so the most
+    // negative 32-bit value cannot overflow (review finding 33).
+    float a = (float)(-(double)(int32_t)u32(p, 0) / 100.0);
     if (!in(a, -600.0f, 600.0f)) return false;
     if (fabsf(a) < 0.01f) a = 0;
     car.packA = a;
-    if (car.packV > 0) {
+    car.ampsStampMs = nowMs;
+    // Power needs a pack voltage of its own time, not whatever was last seen (finding 14).
+    if (car.voltsStampMs != 0 && nowMs - car.voltsStampMs <= STALE_OBD_VOLTS_MS) {
       car.powerKw = car.packV * a / 1000.0f;
       car.fastStampMs = nowMs;
     }
@@ -50,26 +55,29 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
     car.socSeenMinPct = in(lo, 0, 100) ? lo : 0;
     car.socMinPct = 0;
     car.socMaxPct = 100;
-    car.slowStampMs = nowMs;
+    car.socStampMs = nowMs;
     return true;
   }
   if (ecu == ECU_SME && did == DID_SME_TEMPS) {
     if (n < 6) return false;
     float lo = s16(p, 0) / 100.0f, hi = s16(p, 2) / 100.0f, mean = s16(p, 4) / 100.0f;
-    if (!in(lo, -40, 90) || !in(hi, -40, 90) || !in(mean, -40, 90) || lo > hi + 0.5f) return false;
+    if (!in(lo, -40, 90) || !in(hi, -40, 90) || !in(mean, -40, 90)) return false;
+    if (lo > hi || mean < lo - 0.05f || mean > hi + 0.05f) return false;  // ordered, mean between the ends
     car.tempMin = lo;
     car.tempMax = hi;
     car.tempAvg = mean;
-    car.slowStampMs = nowMs;
+    car.tempStampMs = nowMs;
     return true;
   }
   if (ecu == ECU_SME && did == DID_SME_CELLS) {
     if (n < 12) return false;
     float lo = u16(p, 6) / 10000.0f, hi = u16(p, 8) / 10000.0f, mean = u16(p, 10) / 10000.0f;
-    if (!in(lo, 1.5f, 4.5f) || !in(hi, 1.5f, 4.5f) || !in(mean, 1.5f, 4.5f) || lo > hi + 0.001f) return false;
+    if (!in(lo, 1.5f, 4.5f) || !in(hi, 1.5f, 4.5f) || !in(mean, 1.5f, 4.5f)) return false;
+    if (lo > hi || mean < lo - 0.0005f || mean > hi + 0.0005f) return false;
     car.cellMinV = lo;
     car.cellMaxV = hi;
     car.cellAvgV = mean;
+    car.cellStampMs = nowMs;
     return true;
   }
   if (ecu == ECU_SME && did == DID_SME_SOH) {
@@ -77,6 +85,7 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
     uint32_t v = u32(p, 0);
     if (v < 20 || v > 110) return false;
     car.sohPct = (float)v;
+    car.sohStampMs = nowMs;
     return true;
   }
   if (ecu == ECU_EME && did == DID_EME_MACHINE) {
@@ -95,6 +104,7 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
     if (!in(t1, -40, 220) || !in(t2, -40, 220)) return false;
     car.motorTemp1 = t1;
     car.motorTemp2 = t2;
+    car.motorTempStampMs = nowMs;
     return true;
   }
   if (ecu == ECU_EDM && did == DID_EDM_PEDAL) {
@@ -102,6 +112,7 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
     float pct = u16(p, 4) * 0.0625f;
     if (!in(pct, 0, 110)) return false;
     car.pedalPct = pct > 100 ? 100 : pct;
+    car.pedalStampMs = nowMs;
     return true;
   }
   if (ecu == ECU_EDM && did == DID_EDM_IBS) {
@@ -109,6 +120,7 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
     float v = u16(p, 2) / 4000.0f + 6.0f;
     if (!in(v, 6.5f, 17.0f)) return false;
     car.v12 = v;
+    car.v12StampMs = nowMs;
     return true;
   }
   if ((ecu == ECU_DSC && did == DID_DSC_WHEELS) || (ecu == ECU_NBT && did == DID_NBT_WHEELS)) {
@@ -132,6 +144,7 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
     float km = raw / 10.0f;
     if (!in(km, 0, 600)) return false;
     car.rangeKm = km;
+    car.rangeStampMs = nowMs;
     return true;
   }
   return false;

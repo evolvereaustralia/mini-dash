@@ -97,6 +97,24 @@ int main() {
   // --- Adapter and ECU failure shapes -----------------------------------------------------
   CarData before = car;
   uint8_t nrc = 0;
+  // Freshness is per measurement (finding 14): a current with no pack voltage of its own time
+  // makes no power figure, and a temperature reply does not refresh the SOC.
+  {
+    CarData c;
+    uint8_t amps[4] = {0xFF, 0xFF, 0xDA, 0xAC};  // +95.56 A discharge
+    CHECK(ObdDecode::apply(ECU_SME, DID_SME_AMPS, amps, 4, 5000, c) && c.ampsStampMs == 5000 && c.fastStampMs == 0, "current without voltage made a power figure");
+    uint8_t volts[2] = {0x86, 0xF9};
+    ObdDecode::apply(ECU_SME, DID_SME_VOLTS, volts, 2, 6000, c);
+    CHECK(ObdDecode::apply(ECU_SME, DID_SME_AMPS, amps, 4, 6100, c) && c.fastStampMs == 6100, "fresh voltage and current made no power figure");
+    CHECK(ObdDecode::apply(ECU_SME, DID_SME_AMPS, amps, 4, 6000 + STALE_OBD_VOLTS_MS + 500, c) && c.fastStampMs == 6100, "a stale voltage still made a power figure");
+    uint8_t temps[6] = {0x03, 0x93, 0x04, 0xAE, 0x04, 0x2B};
+    CHECK(ObdDecode::apply(ECU_SME, DID_SME_TEMPS, temps, 6, 7000, c) && c.tempStampMs == 7000 && c.socStampMs == 0, "a temperature reply refreshed the SOC stamp");
+    uint8_t minAmps[4] = {0x80, 0x00, 0x00, 0x00};  // the most negative 32-bit value: out of range, and no overflow
+    CarData before2 = c;
+    CHECK(!ObdDecode::apply(ECU_SME, DID_SME_AMPS, minAmps, 4, 8000, c) && c.packA == before2.packA, "INT32_MIN current accepted");
+    uint8_t badTemps[6] = {0x03, 0x93, 0x04, 0xAE, 0x07, 0xD0};  // mean 20.0 outside 9.15..11.98
+    CHECK(!ObdDecode::apply(ECU_SME, DID_SME_TEMPS, badTemps, 6, 9000, c) && c.tempStampMs == 7000, "a mean outside its extremes was accepted");
+  }
   CHECK(run("NO DATA\r\r>", ECU_SME, DID_SME_VOLTS, car) == Reply::NoData, "NO DATA");
   CHECK(run("\r>", ECU_SME, DID_SME_VOLTS, car) == Reply::NoData, "empty");
   CHECK(run("CAN ERROR\r\r>", ECU_SME, DID_SME_VOLTS, car) == Reply::Adapter, "CAN ERROR");

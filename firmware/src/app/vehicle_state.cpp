@@ -25,11 +25,11 @@ void unlock() {
 
 VehicleState &raw() { return g_state; }
 
-void snapshot(VehicleState &out) {
-  if (lock(50)) {
-    out = g_state;
-    unlock();
-  }
+bool snapshot(VehicleState &out) {
+  if (!lock(50)) return false;
+  out = g_state;
+  unlock();
+  return true;
 }
 
 }  // namespace Vs

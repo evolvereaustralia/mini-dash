@@ -30,6 +30,7 @@ void stampWhen(Record &r, bool dateNotTime) {
 }  // namespace
 
 void TripEngine::startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc) {
+  movingKm_ = 0;
   tripId_ = tripId;
   startUtc_ = startUtc;
   startMs_ = nowMs;
@@ -264,9 +265,12 @@ void TripEngine::update(uint32_t nowMs, float speedKph, bool speedValid, float t
   // Trip integration.
   if (speedValid) {
     trip_.distanceKm += speedKph / 3600.0f * dtS;
-    if (moving) trip_.movingS += dtS;
+    if (moving) {
+      trip_.movingS += dtS;
+      movingKm_ += speedKph / 3600.0f * dtS;  // the same intervals as the time, so creep does not inflate the average
+    }
     if (speedKph > trip_.maxKph) trip_.maxKph = speedKph;
-    trip_.avgMovingKph = trip_.movingS > 0 ? trip_.distanceKm / (trip_.movingS / 3600.0f) : 0;
+    trip_.avgMovingKph = trip_.movingS > 0 ? movingKm_ / (trip_.movingS / 3600.0f) : 0;
   }
   trip_.altM = altM;
   if (carLive) {
@@ -274,8 +278,12 @@ void TripEngine::update(uint32_t nowMs, float speedKph, bool speedValid, float t
     else trip_.recoveredKwh += -powerKw * dtS / 3600.0f;
     trip_.netKwh = trip_.drawKwh - trip_.recoveredKwh;
     trip_.whPerKm = trip_.distanceKm > 0.5f ? 1000.0f * trip_.netKwh / trip_.distanceKm : 0;
-    if (trip_.socStartPct < 0) trip_.socStartPct = socPct;
-    trip_.socUsedPct = trip_.socStartPct - socPct;
+    // The baseline waits for a real SOC reading: power arrives first on a new link, and a
+    // baseline of zero made "SOC used" read about minus 50 (review finding 14).
+    if (socPct >= 0) {
+      if (trip_.socStartPct < 0) trip_.socStartPct = socPct;
+      trip_.socUsedPct = trip_.socStartPct - socPct;
+    }
     trip_.energyValid = true;
   }
 

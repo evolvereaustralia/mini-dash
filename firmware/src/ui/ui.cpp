@@ -50,7 +50,7 @@ bool setText(lv_obj_t *l, const char *s) {
   return true;
 }
 bool setTextF(lv_obj_t *l, const char *fmt, ...) {
-  char buf[96];
+  char buf[256];  // 96 cut the event page's context line short (review finding 36)
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -72,22 +72,29 @@ void setBorder(lv_obj_t *o, uint32_t color) {
   if (lv_color_to32(lv_obj_get_style_border_color(o, 0)) != lv_color_to32(c(color))) lv_obj_set_style_border_color(o, c(color), 0);
 }
 bool fresh(uint32_t stamp, uint32_t maxAge) { return stamp != 0 && g_now - stamp < maxAge; }
-bool carFast() { return g_vs.car.linked && !g_vs.car.asleep && fresh(g_vs.car.fastStampMs, STALE_OBD_FAST_MS); }
-bool carSlow() { return g_vs.car.linked && !g_vs.car.asleep && fresh(g_vs.car.slowStampMs, STALE_OBD_SLOW_MS); }
+// Each car value is judged on its own stamp (review finding 14).
+bool carUp() { return g_vs.car.linked && !g_vs.car.asleep; }
+bool carItem(uint32_t stamp, uint32_t maxAge) { return carUp() && fresh(stamp, maxAge); }
+bool carFast() { return carItem(g_vs.car.fastStampMs, STALE_OBD_FAST_MS); }  // the power figure
 bool gpsFresh() { return fresh(g_vs.gps.stampMs, STALE_GPS_MS) && g_vs.gps.fixOk; }
 bool motionFresh() { return fresh(g_vs.motion.stampMs, STALE_IMU_MS); }
 float kphToDisplay(float kph) { return g_units_mph ? kph * 0.621371f : kph; }
 const char *speedUnit() { return g_units_mph ? "mph" : "km/h"; }
 
 // A value label that greys out and shows a dash when invalid.
-void setValue(lv_obj_t *l, bool valid, const char *fmt, float v) {
+void setValue(lv_obj_t *l, bool valid, const char *fmt, ...) {
   if (!valid) {
     setText(l, "—");
     setColor(l, MUTED);
-  } else {
-    setTextF(l, fmt, v);
-    setColor(l, FG);
+    return;
   }
+  char buf[96];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  setText(l, buf);
+  setColor(l, FG);
 }
 
 lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h, const char *text, const lv_font_t *font,
@@ -271,10 +278,13 @@ void buildDrive(lv_obj_t *p) {
 
 void updateDrive() {
   bool live = carFast();
-  bool wheels = live && g_vs.disp.speedSource == SpeedSource::Wheels;
-  bool haveSpeed = g_vs.disp.speedSource != SpeedSource::None;
-  setText(D.srcL, wheels ? "WHEELS" : "GPS");
-  uint32_t srcColor = wheels ? LIME : (gpsFresh() ? MUTED : AMBER);
+  // The figure is shown only while its own source is fresh at this moment: the state can be
+  // older than it looks if the publisher stalls (review finding 40).
+  bool wheelsSel = g_vs.disp.speedSource == SpeedSource::Wheels;
+  bool wheels = wheelsSel && carItem(g_vs.car.wheelStampMs, STALE_OBD_FAST_MS);
+  bool haveSpeed = wheels || (g_vs.disp.speedSource == SpeedSource::Gps && gpsFresh());
+  setText(D.srcL, wheelsSel ? "WHEELS" : "GPS");
+  uint32_t srcColor = !haveSpeed ? AMBER : (wheels ? LIME : MUTED);
   setColor(D.srcL, srcColor);
   setBorder(D.srcPill, srcColor);
   if (haveSpeed) {
@@ -287,7 +297,8 @@ void updateDrive() {
   char hd[8];
   const char *dirs[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
   snprintf(hd, sizeof(hd), "%s", dirs[((int)((g_vs.gps.headingDeg + 22.5f) / 45.0f)) & 7]);
-  if (wheels) setTextF(D.sub, "%s · GPS %d · %03d° %s", speedUnit(), (int)lroundf(kphToDisplay(g_vs.gps.speedMps * 3.6f)), (int)g_vs.gps.headingDeg, hd);
+  if (wheels && gpsFresh()) setTextF(D.sub, "%s · GPS %d · %03d° %s", speedUnit(), (int)lroundf(kphToDisplay(g_vs.gps.speedMps * 3.6f)), (int)g_vs.gps.headingDeg, hd);
+  else if (wheels) setTextF(D.sub, "%s · GPS —", speedUnit());
   else if (gpsFresh()) setTextF(D.sub, "%s · %03d° %s", speedUnit(), (int)g_vs.gps.headingDeg, hd);
   else setTextF(D.sub, "%s · no fix", speedUnit());
 
@@ -325,8 +336,7 @@ void updateDrive() {
     lv_obj_set_width(D.pFill, 0);
   }
 
-  bool slow = carSlow();
-  if (slow) {
+  if (carItem(g_vs.car.socStampMs, STALE_OBD_SLOW_MS)) {
     setTextF(D.soc, "%d %%", (int)lroundf(g_vs.car.socPct));
     setColor(D.soc, FG);
     int x0 = (int)(g_vs.car.socMinPct * 2), x1 = (int)(g_vs.car.socMaxPct * 2);
@@ -335,16 +345,22 @@ void updateDrive() {
     lv_obj_set_pos(D.socFill, x0, 0);
     int fill = (int)(g_vs.car.socRawPct * 2) - x0;
     lv_obj_set_width(D.socFill, fill < 0 ? 0 : fill);
-    setTextF(D.range, "%d km", (int)lroundf(g_vs.car.rangeKm));
-    setColor(D.range, FG);
-    setTextF(D.packLine, "%.0f °C · %.0f V", g_vs.car.tempAvg, g_vs.car.packV);
-    setColor(D.packLine, FG);
   } else {
     setText(D.soc, "—");
     setColor(D.soc, MUTED);
     lv_obj_set_width(D.socFill, 0);
+  }
+  if (carItem(g_vs.car.rangeStampMs, STALE_OBD_RANGE_MS)) {
+    setTextF(D.range, "%d km", (int)lroundf(g_vs.car.rangeKm));
+    setColor(D.range, FG);
+  } else {
     setText(D.range, "— km");
     setColor(D.range, MUTED);
+  }
+  if (carItem(g_vs.car.tempStampMs, STALE_OBD_SLOW_MS) && carItem(g_vs.car.voltsStampMs, STALE_OBD_VOLTS_MS)) {
+    setTextF(D.packLine, "%.0f °C · %.0f V", g_vs.car.tempAvg, g_vs.car.packV);
+    setColor(D.packLine, FG);
+  } else {
     setText(D.packLine, "—");
     setColor(D.packLine, MUTED);
   }
@@ -357,7 +373,7 @@ void updateDrive() {
   uint32_t dp = millis() - tp;
   if (dp > g_plotMaxMs) g_plotMaxMs = dp;
   setValue(D.combined, mv, "%.2f g", g_vs.motion.combinedG);
-  setValue(D.trip, g_vs.trip.energyValid && g_vs.trip.whPerKm > 0, "%.0f Wh/km", g_vs.trip.whPerKm);
+  setValue(D.trip, g_vs.trip.energyValid && g_vs.trip.distanceKm > 0.5f, "%.0f Wh/km", g_vs.trip.whPerKm);
 
   int bf = g_vs.disp.bestField % REC_COUNT;
   const Record &r = g_vs.recTrip.r[bf];
@@ -551,9 +567,9 @@ void updateTrip() {
     }
   }
   setTextF(T.sDist, "%.1f km", g_vs.trip.distanceKm);
-  setValue(T.sEff, g_vs.trip.energyValid && g_vs.trip.whPerKm > 0, "%.0f Wh/km", g_vs.trip.whPerKm);
+  setValue(T.sEff, g_vs.trip.energyValid && g_vs.trip.distanceKm > 0.5f, "%.0f Wh/km", g_vs.trip.whPerKm);
   setValue(T.sRec, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.recoveredKwh);
-  setValue(T.sSoc, g_vs.trip.energyValid, "%.0f %%", g_vs.trip.socUsedPct);
+  setValue(T.sSoc, g_vs.trip.energyValid && g_vs.trip.socStartPct >= 0, "%.0f %%", g_vs.trip.socUsedPct);
 
   if (T.view == TV_JOURNEY) {
     const TripData &t = g_vs.trip;
@@ -563,8 +579,8 @@ void updateTrip() {
     setTextF(T.jVal[3], "%.0f %s", kphToDisplay(t.maxKph), speedUnit());
     setValue(T.jVal[4], t.energyValid, "%.2f kWh", t.netKwh);
     setValue(T.jVal[5], t.energyValid, "%.2f kWh", t.recoveredKwh);
-    setValue(T.jVal[6], t.energyValid && t.whPerKm > 0, "%.0f Wh/km", t.whPerKm);
-    setValue(T.jVal[7], t.energyValid, "%.0f %%", t.socUsedPct);
+    setValue(T.jVal[6], t.energyValid && t.distanceKm > 0.5f, "%.0f Wh/km", t.whPerKm);
+    setValue(T.jVal[7], t.energyValid && t.socStartPct >= 0, "%.0f %%", t.socUsedPct);
     setValue(T.jVal[8], t.best60to100S > 0, "%.1f s", t.best60to100S);
     setValue(T.jVal[9], g_vs.motion.peakBrake > 0, "%.2f g", g_vs.motion.peakBrake);
     setValue(T.jVal[10], g_vs.motion.peakAccel > 0, "%.2f g", g_vs.motion.peakAccel);
@@ -608,23 +624,28 @@ void updateTrip() {
       for (int k = 0; k < 3; k++) show(T.eChart[k], false);
       show(T.eNote, false);
     } else {
+      char ctx[40];
+      if (r.socPct >= 0 && r.packTemp > -99) snprintf(ctx, sizeof(ctx), "SOC %.0f %% · Pack %.0f °C", r.socPct, r.packTemp);
+      else if (r.socPct >= 0) snprintf(ctx, sizeof(ctx), "SOC %.0f %% · Pack —", r.socPct);
+      else if (r.packTemp > -99) snprintf(ctx, sizeof(ctx), "SOC — · Pack %.0f °C", r.packTemp);
+      else snprintf(ctx, sizeof(ctx), "No car data at the event");
       switch (T.eventIdx) {
         case REC_0_60:
         case REC_0_100:
-          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Stationary start, no rollout · %u valid run%s · GPS gate: 3D fix, 7+ sats, speed accuracy under 0.5 m/s · crossing interpolated between samples",
-                   r.socPct, r.packTemp, r.runs, r.runs == 1 ? "" : "s");
+          setTextF(T.eMeta, "%s · Stationary start, no rollout · %u valid run%s · GPS gate: 3D fix, 7+ sats, speed accuracy under 0.5 m/s · crossing interpolated between samples",
+                   ctx, r.runs, r.runs == 1 ? "" : "s");
           break;
         case REC_60_0:
-          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Timed from 60 km/h · Distance %.0f m · Max braking %.2f g this session",
-                   r.socPct, r.packTemp, r.aux, g_vs.motion.peakBrake);
+          setTextF(T.eMeta, "%s · Timed from 60 km/h · Distance %.0f m · Max braking %.2f g this session",
+                   ctx, r.aux, g_vs.motion.peakBrake);
           break;
         case REC_LAT:
-          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Filtered IMU peak (5 Hz path) · %s turn · Session L %.2f · R %.2f g",
-                   r.socPct, r.packTemp, r.aux < 0 ? "Left" : "Right", g_vs.motion.peakLeft, g_vs.motion.peakRight);
+          setTextF(T.eMeta, "%s · Filtered IMU peak (5 Hz path) · %s turn · Session L %.2f · R %.2f g",
+                   ctx, r.aux < 0 ? "Left" : "Right", g_vs.motion.peakLeft, g_vs.motion.peakRight);
           break;
         default:
-          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · One-second mean %.1f kW · Instantaneous max %.1f kW · Battery-side power, not motor output",
-                   r.socPct, r.packTemp, r.value, r.aux);
+          setTextF(T.eMeta, "%s · One-second mean %.1f kW · Instantaneous max %.1f kW · Battery-side power, not motor output",
+                   ctx, r.value, r.aux);
           break;
       }
     }
@@ -689,18 +710,19 @@ void updateDynamics() {
   setValue(Y.yaw, mv, "%+.1f °/s", g_vs.motion.yawDps);
   const float pk[4] = {g_vs.motion.peakLeft, g_vs.motion.peakRight, g_vs.motion.peakAccel, g_vs.motion.peakBrake};
   for (int i = 0; i < 4; i++) setValue(Y.pk[i], pk[i] > 0, "%.2f", pk[i]);
-  bool live = carFast();
-  if (live) {
+  if (carItem(g_vs.car.driveStampMs, STALE_OBD_DRIVE_MS)) {
     setTextF(Y.torque, "%.0f / %.0f Nm", g_vs.car.torqueNm, g_vs.car.torqueReqNm);
     setColor(Y.torque, FG);
-    setTextF(Y.pedal, "%.0f %%  ·  %.0f / %.0f °C", g_vs.car.pedalPct, g_vs.car.motorTemp1, g_vs.car.motorTemp2);
-    setColor(Y.pedal, FG);
   } else {
     setText(Y.torque, "—");
     setColor(Y.torque, MUTED);
-    setText(Y.pedal, "—");
-    setColor(Y.pedal, MUTED);
   }
+  bool pedal = carItem(g_vs.car.pedalStampMs, STALE_OBD_DRIVE_MS), mtemp = carItem(g_vs.car.motorTempStampMs, STALE_OBD_SLOW_MS);
+  if (pedal && mtemp) setTextF(Y.pedal, "%.0f %%  ·  %.0f / %.0f °C", g_vs.car.pedalPct, g_vs.car.motorTemp1, g_vs.car.motorTemp2);
+  else if (pedal) setTextF(Y.pedal, "%.0f %%  ·  —", g_vs.car.pedalPct);
+  else if (mtemp) setTextF(Y.pedal, "—  ·  %.0f / %.0f °C", g_vs.car.motorTemp1, g_vs.car.motorTemp2);
+  else setText(Y.pedal, "—");
+  setColor(Y.pedal, pedal || mtemp ? FG : MUTED);
 }
 
 // ---- Energy and Battery (charts) ------------------------------------------------------------
@@ -772,10 +794,10 @@ void buildEnergy(lv_obj_t *p) {
 }
 void updateEnergy() {
   bool live = carFast();
-  setValue(E.avg, g_vs.trip.energyValid && g_vs.trip.whPerKm > 0, "%.0f Wh/km", g_vs.trip.whPerKm);
+  setValue(E.avg, g_vs.trip.energyValid && g_vs.trip.distanceKm > 0.5f, "%.0f Wh/km", g_vs.trip.whPerKm);
   setValue(E.net, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.netKwh);
   setValue(E.rec, g_vs.trip.energyValid, "%.2f kWh", g_vs.trip.recoveredKwh);
-  setValue(E.soc, g_vs.trip.energyValid, "%.0f %%", g_vs.trip.socUsedPct);
+  setValue(E.soc, g_vs.trip.energyValid && g_vs.trip.socStartPct >= 0, "%.0f %%", g_vs.trip.socUsedPct);
   if (g_now - E.lastPoint >= 5000) {  // 120 points over 10 min
     E.lastPoint = g_now;
     lv_chart_set_next_value(E.chart, E.ser, live ? (lv_coord_t)lroundf(g_vs.car.powerKw) : LV_CHART_POINT_NONE);
@@ -803,31 +825,20 @@ void buildBattery(lv_obj_t *p) {
   B.nodata = noData(p);
 }
 void updateBattery() {
-  bool live = carFast(), slow = carSlow();
-  setValue(B.v, live, "%.1f V", g_vs.car.packV);
-  setValue(B.a, live, "%+.0f A", g_vs.car.packA);
-  if (slow) {
-    setTextF(B.temp, "%.0f·%.0f·%.0f °C", g_vs.car.tempMin, g_vs.car.tempAvg, g_vs.car.tempMax);
-    setColor(B.temp, FG);
-    setTextF(B.spread, "%.0f mV", (g_vs.car.cellMaxV - g_vs.car.cellMinV) * 1000.0f);
-    setColor(B.spread, FG);
-    setTextF(B.cells, "%.2f · %.2f · %.2f V", g_vs.car.cellAvgV, g_vs.car.cellMinV, g_vs.car.cellMaxV);
-    setColor(B.cells, FG);
-    setTextF(B.v12, "%.1f V", g_vs.car.v12);
-    setColor(B.v12, FG);
-    setTextF(B.soh, "%.0f %%", g_vs.car.sohPct);
-    setColor(B.soh, FG);
-  } else {
-    for (lv_obj_t *l : {B.temp, B.spread, B.cells, B.v12, B.soh}) {
-      setText(l, "—");
-      setColor(l, MUTED);
-    }
-  }
+  bool volts = carItem(g_vs.car.voltsStampMs, STALE_OBD_VOLTS_MS), amps = carItem(g_vs.car.ampsStampMs, STALE_OBD_FAST_MS);
+  bool temps = carItem(g_vs.car.tempStampMs, STALE_OBD_SLOW_MS), cells = carItem(g_vs.car.cellStampMs, STALE_OBD_SLOW_MS);
+  setValue(B.v, volts, "%.1f V", g_vs.car.packV);
+  setValue(B.a, amps, "%+.0f A", g_vs.car.packA);
+  setValue(B.temp, temps, "%.0f·%.0f·%.0f °C", g_vs.car.tempMin, g_vs.car.tempAvg, g_vs.car.tempMax);
+  setValue(B.spread, cells, "%.0f mV", (g_vs.car.cellMaxV - g_vs.car.cellMinV) * 1000.0f);
+  setValue(B.cells, cells, "%.2f · %.2f · %.2f V", g_vs.car.cellAvgV, g_vs.car.cellMinV, g_vs.car.cellMaxV);
+  setValue(B.v12, carItem(g_vs.car.v12StampMs, STALE_OBD_SLOW_MS), "%.1f V", g_vs.car.v12);
+  setValue(B.soh, carUp() && g_vs.car.sohStampMs != 0, "%.0f %%", g_vs.car.sohPct);  // read once per connection
   if (g_now - B.lastPoint >= 5000) {
     B.lastPoint = g_now;
-    lv_chart_set_next_value(B.chart, B.ser, slow ? (lv_coord_t)lroundf(g_vs.car.tempAvg) : LV_CHART_POINT_NONE);
+    lv_chart_set_next_value(B.chart, B.ser, temps ? (lv_coord_t)lroundf(g_vs.car.tempAvg) : LV_CHART_POINT_NONE);
   }
-  show(B.nodata, !slow);
+  show(B.nodata, !(volts || amps || temps || cells));
 }
 
 // ---- Settings ----------------------------------------------------------------------------
@@ -1042,9 +1053,12 @@ void buildShell() {
 }
 
 void updateHeader() {
-  if (g_vs.gps.fixOk && fresh(g_vs.gps.stampMs, 2000)) {
+  if (gpsFresh()) {
     setTextF(H.gps, "GPS %d", g_vs.gps.sats);
     setColor(H.gps, MUTED);
+  } else if (g_vs.gps.fixOk && fresh(g_vs.gps.stampMs, 2000)) {
+    setTextF(H.gps, "GPS %d", g_vs.gps.sats);  // a fix, but older than the 500 ms rule: amber
+    setColor(H.gps, AMBER);
   } else {
     setText(H.gps, "GPS acquiring");
     setColor(H.gps, AMBER);

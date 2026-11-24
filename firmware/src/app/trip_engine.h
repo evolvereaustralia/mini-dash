@@ -31,6 +31,8 @@ class TripEngine {
   void startTrip(uint32_t tripId, uint32_t nowMs, uint32_t startUtc);
   void reset(uint32_t nowMs) { startTrip(tripId_, nowMs, startUtc_); }
 
+  // socPct below zero and packTemp below -99 mean "not known now": the trip's SOC baseline
+  // waits for a real reading and records carry the unknown through.
   // One update with whatever is fresh. speedKph is the displayed (fused or wheel) speed and
   // integrates the trip; timingKph is the raw GPS sample the timers run on (CLAUDE.md section
   // 5, path 2), and timingValid false invalidates a run in progress.
@@ -89,6 +91,7 @@ class TripEngine {
   int ringHead_ = 0, ringCount_ = 0;
   uint32_t lastTraceMs_ = 0;
   uint32_t pendingMs_[REC_COUNT] = {};
+  float movingKm_ = 0;  // distance covered while moving, for the moving average
   EventSink sink_ = nullptr;
 
   TripData trip_;

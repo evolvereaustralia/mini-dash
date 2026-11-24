@@ -9,6 +9,9 @@
 constexpr uint32_t STALE_GPS_MS = 500;
 constexpr uint32_t STALE_OBD_FAST_MS = 1000;
 constexpr uint32_t STALE_OBD_SLOW_MS = 5000;
+constexpr uint32_t STALE_OBD_DRIVE_MS = 4000;   // torque and pedal, asked for about every 2 s
+constexpr uint32_t STALE_OBD_RANGE_MS = 12000;  // range, asked for every 5 s
+constexpr uint32_t STALE_OBD_VOLTS_MS = 3000;   // how old a pack voltage may be and still make a power figure
 constexpr uint32_t STALE_IMU_MS = 200;
 
 struct GpsData {
@@ -42,8 +45,13 @@ struct MotionData {
 };
 
 struct CarData {
-  uint32_t fastStampMs = 0, slowStampMs = 0;  // pack volts and amps (power); the slow group
-  uint32_t wheelStampMs = 0, driveStampMs = 0;  // wheel speeds; torque, motor speed and pedal
+  // One stamp per measurement (review finding 14): a fresh reply to one identifier must never
+  // make another look fresh. fastStampMs is the power figure, which needs a current and a
+  // pack voltage no older than STALE_OBD_VOLTS_MS.
+  uint32_t fastStampMs = 0, voltsStampMs = 0, ampsStampMs = 0;
+  uint32_t wheelStampMs = 0, driveStampMs = 0, pedalStampMs = 0;  // wheel speeds; torque and motor speed; pedal
+  uint32_t socStampMs = 0, tempStampMs = 0, cellStampMs = 0, motorTempStampMs = 0;
+  uint32_t v12StampMs = 0, rangeStampMs = 0, sohStampMs = 0;
   bool linked = false;   // BLE connected to the dongle
   bool asleep = false;   // connected but requests time out
   // socPct is the battery ECU's display SOC, which is what the dash shows (checked against
@@ -161,7 +169,7 @@ void begin();
 bool lock(uint32_t timeoutMs = 50);
 void unlock();
 VehicleState &raw();            // only while holding the lock
-void snapshot(VehicleState &out);  // takes and releases the lock itself
+bool snapshot(VehicleState &out);  // takes and releases the lock itself; false (out untouched) on a timeout
 }  // namespace Vs
 
 class VsLock {
