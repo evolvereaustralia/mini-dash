@@ -23,7 +23,7 @@ ISO 15765 on 11-bit CAN at 500 kbit with extended addressing: we send on 0x6F1 w
 | DSC 29 | DBE4 | wheel speeds FL FR RL RR | s16 / 100 km/h | fast, tried first |
 | NBT 63 | D030 | wheel speeds | s16 km/h | fast, fallback |
 | EDM 12 | DE9C | accelerator pedal | u16 at 4 * 0.0625 % | fast |
-| SME 07 | DDBC | SOC, maximum, minimum | u16 / 10 % each | slow |
+| SME 07 | DDBC | display SOC (as the dash shows it); a maximum and a minimum that are not limits | u16 / 10 % each | slow |
 | SME 07 | DDC0 | pack temperature min, max, mean | s16 / 100 C | slow |
 | SME 07 | DFA0 | cell voltage min, max, mean | u16 / 10000 V at 6, 8, 10 | slow |
 | EME 1A | DEA6 | motor temperatures 1 and 2 | s16 * 0.0156 C | slow |
@@ -44,7 +44,7 @@ The firmware prints these on serial; `firmware/tools/drive_log.py` captures them
 
 ## Checks against the car (open)
 
-- SOC: the `OBD first` line for DDBC prints the raw SOC, the limits and the scaled figure. The dash should show the scaled one (CLAUDE.md section 3); if it shows the raw one, the scaling is wrong for this car and `obd_decode.cpp` changes.
+- SOC: done 24 Nov 2026. The ECU said 50.7 %, the dash showed 51 %, the scaled figure would have been 42 %. The first value of DDBC is shown as it is; the other two (99.9 and 14.5 here) are not a usable window, most likely the highest and lowest SOC the car has recorded.
 - Power sign: with the car in READY and stationary the figure should be a small positive draw; under acceleration it grows positive, lifting off it goes negative. Compare with the car's power gauge.
 - Wheel speed against the speedo at a steady 60 km/h.
 
@@ -60,7 +60,7 @@ The firmware prints these on serial; `firmware/tools/drive_log.py` captures them
 |---|---|---|---|
 | 07 | DD68 | 8C03 | pack 358.43 V |
 | 07 | DD69 | FFFFFCFC | -7.72 A in the car's convention, +7.72 A discharge, 2.77 kW |
-| 07 | DDBC | 01FB03E70091 | SOC 50.7 %, maximum 99.9 %, minimum 14.5 %; scaled 42.4 % |
+| 07 | DDBC | 01FB03E70091 | SOC 50.7 % (dash: 51 %), maximum 99.9 %, minimum 14.5 % |
 | 07 | DDC0 | 06A5076B0735 | pack temperature min 17.01, max 18.99, mean 18.45 C |
 | 07 | DFA0 | 25DD26B3264791AA921691D906A5076B0735FFFFFFFF268F15B3167E1614920492729235268F | cells min 3.7290, max 3.7398, mean 3.7337 V |
 | 07 | 6335 | 00000064 | SOH 100 % |
@@ -75,4 +75,4 @@ Nothing refused, nothing unanswered in 1400 requests across four sessions. Plaus
 
 Rates (requests answered per second, all identifiers): 5.2 as first written; 8.2 with a 7.5 to 15 ms connection interval, the expected-responses digit and a 100 ms adapter timeout; 9 with the shared receive filter. A request costs 45 to 130 ms depending on the ECU (the battery ECU is the slowest), a change of ECU about 50 ms. Result with the schedule as committed: battery power 1.9 Hz, wheel speeds 1.9 Hz, pack voltage 1.4 Hz, torque and pedal 0.45 Hz, slow group every 2 s. The brief's 5 Hz for the whole fast group is not reachable through this adapter.
 
-Still open: the SOC shown on the dash at that moment (42 or 51), the power sign under acceleration and regen, wheel speed against the speedo.
+Still open: the power sign under acceleration and regen, wheel speed against the speedo.

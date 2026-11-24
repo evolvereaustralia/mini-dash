@@ -40,8 +40,9 @@ constexpr uint8_t ECU_NBT = 0x63;  // head unit                   [OVMS] ecu_nbt
 constexpr uint16_t DID_SME_VOLTS = 0xDD68;  // u16 / 100 V. [OVMS] HV_SPANNUNG_BERECHNET; [OBDb] COOPER_HVBAT_VOLT
 constexpr uint16_t DID_SME_AMPS = 0xDD69;   // s32 / 100 A, positive while charging; negated here so
                                             // positive is discharge. [OVMS] HV_STROM (negates too); [OBDb] COOPER_HVBAT_CURR
-constexpr uint16_t DID_SME_SOC = 0xDDBC;    // u16 / 10 % at 0 (SOC), 2 (maximum), 4 (minimum). [OVMS] ANZEIGE_SOC;
-                                            // [OBDb] COOPER_HVBAT_SOC, _MAX, _MIN (recorded: 74.4, 97.0, 11.5)
+constexpr uint16_t DID_SME_SOC = 0xDDBC;    // u16 / 10 % at 0: the display SOC, shown by the dash as it is ([car]: 50.7 against
+                                            // 51 on the dash; [OVMS] ANZEIGE_SOC uses it unscaled too). At 2 and 4: a maximum and
+                                            // a minimum that are not a usable window ([car] 99.9 and 14.5; [OBDb] 97.0 and 11.5)
 constexpr uint16_t DID_SME_TEMPS = 0xDDC0;  // s16 / 100 C at 0 (min), 2 (max), 4 (mean). [OVMS] TEMPERATUREN; [OBDb] _CT_MIN, _CT_MAX
 constexpr uint16_t DID_SME_CELLS = 0xDFA0;  // u16 / 10000 V at 6 (min), 8 (max), 10 (mean); 38 bytes or more.
                                             // [OVMS] ZUSTAND_SPEICHER; [OBDb] COOPER_HVBAT_C_V_MIN, _MAX, _AVG

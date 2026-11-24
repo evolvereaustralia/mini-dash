@@ -38,13 +38,18 @@ bool apply(uint8_t ecu, uint16_t did, const uint8_t *p, size_t n, uint32_t nowMs
   }
   if (ecu == ECU_SME && did == DID_SME_SOC) {
     if (n < 6) return false;
-    float raw = u16(p, 0) / 10.0f, hi = u16(p, 2) / 10.0f, lo = u16(p, 4) / 10.0f;
-    if (!in(raw, 0, 100) || !in(hi, 50, 100) || !in(lo, 0, 50) || hi - lo < 20) return false;
-    car.socRawPct = raw;
-    car.socMaxPct = hi;
-    car.socMinPct = lo;
-    float shown = (raw - lo) / (hi - lo) * 100.0f;
-    car.socPct = shown < 0 ? 0 : (shown > 100 ? 100 : shown);
+    // The first figure is what the dash shows, as it is: Logan's dash read 51 % against 50.7 here
+    // (24 Nov 2026). The other two are not a usable window to scale between, as the brief first
+    // assumed; they look like the highest and lowest values the car has recorded (99.9 and
+    // 14.5 on this car, and they only ever widen in OBDb's recordings). Kept for the log.
+    float soc = u16(p, 0) / 10.0f, hi = u16(p, 2) / 10.0f, lo = u16(p, 4) / 10.0f;
+    if (!in(soc, 0, 100)) return false;
+    car.socPct = soc;
+    car.socRawPct = soc;
+    car.socSeenMaxPct = in(hi, 0, 100) ? hi : 0;
+    car.socSeenMinPct = in(lo, 0, 100) ? lo : 0;
+    car.socMinPct = 0;
+    car.socMaxPct = 100;
     car.slowStampMs = nowMs;
     return true;
   }
@@ -136,7 +141,7 @@ void describe(uint8_t ecu, uint16_t did, const CarData &car, char *out, size_t o
   if (ecu == ECU_SME && did == DID_SME_VOLTS) snprintf(out, outLen, "pack %.2f V", car.packV);
   else if (ecu == ECU_SME && did == DID_SME_AMPS) snprintf(out, outLen, "pack %+.2f A (discharge positive), %+.2f kW", car.packA, car.powerKw);
   else if (ecu == ECU_SME && did == DID_SME_SOC)
-    snprintf(out, outLen, "SOC raw %.1f %%, limits %.1f to %.1f %%, shown %.1f %%", car.socRawPct, car.socMinPct, car.socMaxPct, car.socPct);
+    snprintf(out, outLen, "SOC %.1f %% (highest recorded %.1f, lowest %.1f)", car.socPct, car.socSeenMaxPct, car.socSeenMinPct);
   else if (ecu == ECU_SME && did == DID_SME_TEMPS) snprintf(out, outLen, "pack temp min %.2f max %.2f mean %.2f C", car.tempMin, car.tempMax, car.tempAvg);
   else if (ecu == ECU_SME && did == DID_SME_CELLS) snprintf(out, outLen, "cells min %.4f max %.4f mean %.4f V", car.cellMinV, car.cellMaxV, car.cellAvgV);
   else if (ecu == ECU_SME && did == DID_SME_SOH) snprintf(out, outLen, "SOH %.0f %%", car.sohPct);

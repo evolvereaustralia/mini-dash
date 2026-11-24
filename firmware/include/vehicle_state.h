@@ -46,9 +46,12 @@ struct CarData {
   uint32_t wheelStampMs = 0, driveStampMs = 0;  // wheel speeds; torque, motor speed and pedal
   bool linked = false;   // BLE connected to the dongle
   bool asleep = false;   // connected but requests time out
-  // socPct is what the dash shows: the pack's own SOC (socRawPct) scaled between the usable
-  // limits the battery ECU reports (socMinPct, socMaxPct).
+  // socPct is the battery ECU's display SOC, which is what the dash shows (checked against
+  // the car 24 Nov 2026). socMinPct and socMaxPct are the ends of the SOC bar, 0 and 100;
+  // socRawPct is the bar's fill and equals socPct. The ECU's other two figures look like the
+  // highest and lowest SOC it has recorded and are kept for the log only.
   float socPct = 0, socMinPct = 0, socMaxPct = 100, socRawPct = 0;
+  float socSeenMaxPct = 0, socSeenMinPct = 0;
   float packV = 0, packA = 0, powerKw = 0;           // positive = discharging
   float tempMin = 0, tempAvg = 0, tempMax = 0;
   float cellAvgV = 0, cellMinV = 0, cellMaxV = 0;

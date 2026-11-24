@@ -133,12 +133,12 @@ void demoTask(void *) {
       vs.car.fastStampMs = now;
       vs.car.slowStampMs = now;
       vs.car.socPct = g_soc;
-      vs.car.socRawPct = 6.0f + g_soc * 0.88f;
+      vs.car.socRawPct = g_soc;
       vs.car.wheelStampMs = now;
       vs.car.driveStampMs = now;
       vs.car.motorRpm = kph * 77.0f;
-      vs.car.socMinPct = 6;
-      vs.car.socMaxPct = 94;
+      vs.car.socMinPct = 0;
+      vs.car.socMaxPct = 100;
       vs.car.packV = 352.0f + (g_soc - 50.0f) * 0.5f - power * 0.08f;
       vs.car.packA = vs.car.packV > 1 ? power * 1000.0f / vs.car.packV : 0;
       vs.car.powerKw = power;

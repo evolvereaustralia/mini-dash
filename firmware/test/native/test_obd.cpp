@@ -51,8 +51,11 @@ int main() {
         "DD69 small %.2f", car.packA);
   // 2023/6F1.607.22DDBC: SOC 74.4, max 97.0, min 11.5
   CHECK(run("607F1100962DDBC02E8\r607F12103CA0073FFFF\r>", ECU_SME, DID_SME_SOC, car, &ap) == Reply::Ok && ap, "DDBC parse");
-  CHECK(near(car.socRawPct, 74.4f, 0.01f) && near(car.socMaxPct, 97.0f, 0.01f) && near(car.socMinPct, 11.5f, 0.01f), "DDBC values");
-  CHECK(near(car.socPct, (74.4f - 11.5f) / (97.0f - 11.5f) * 100.0f, 0.01f), "DDBC shown %.2f", car.socPct);
+  CHECK(near(car.socPct, 74.4f, 0.01f) && near(car.socSeenMaxPct, 97.0f, 0.01f) && near(car.socSeenMinPct, 11.5f, 0.01f), "DDBC values");
+  CHECK(car.socMinPct == 0 && car.socMaxPct == 100 && car.socRawPct == car.socPct, "DDBC is shown unscaled, bar 0 to 100");
+  // Logan's car, 24 Nov 2026: the dash read 51 %
+  CHECK(run("607F1100962DDBC01FB\r607F12103E70091FFFF\r>", ECU_SME, DID_SME_SOC, car, &ap) == Reply::Ok && ap && near(car.socPct, 50.7f, 0.01f),
+        "DDBC from the car %.1f", car.socPct);
   // 2023/6F1.607.22DDC0: min 9.15, max 11.98
   CHECK(run("607F1100962DDC00393\r607F12104AE042BFFFF\r>", ECU_SME, DID_SME_TEMPS, car, &ap) == Reply::Ok && ap, "DDC0 parse");
   CHECK(near(car.tempMin, 9.15f, 0.005f) && near(car.tempMax, 11.98f, 0.005f) && near(car.tempAvg, 10.67f, 0.005f), "DDC0 values %.2f %.2f %.2f",
@@ -116,8 +119,8 @@ int main() {
   // out-of-range values are refused and change nothing: 20 V pack, SOC limits reversed, 0xFFFF range
   car = before;
   CHECK(run("607F10562DD6807D0\r>", ECU_SME, DID_SME_VOLTS, car, &ap) == Reply::Ok && !ap && car.packV == before.packV, "20 V refused");
-  CHECK(run("607F1100962DDBC02E8\r607F1210073" "03CAFFFF\r>", ECU_SME, DID_SME_SOC, car, &ap) == Reply::Ok && !ap && car.socPct == before.socPct,
-        "reversed SOC limits refused");
+  CHECK(run("607F1100962DDBC0FA0\r607F12103CA0073FFFF\r>", ECU_SME, DID_SME_SOC, car, &ap) == Reply::Ok && !ap && car.socPct == before.socPct,
+        "400 %% SOC refused");
   CHECK(run("660F1100F62D111FFFF\r660F12106E001A4FFFF\r660F1223C660027FFFF\r>", ECU_KOM, DID_KOM_RANGE, car, &ap) == Reply::Ok && !ap, "range FFFF refused");
   // request text
   char req[12];
