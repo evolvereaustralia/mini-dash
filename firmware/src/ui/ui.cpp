@@ -26,6 +26,7 @@ uint32_t g_tickMaxMs = 0, g_plotMaxMs = 0;
 // Settings state mirrored in the UI.
 int g_nightMode = -1;
 bool g_demo = true;
+bool g_obd = true;
 bool g_units_mph = false;
 void notifySettings() {
   if (!g_cb.settingsChanged) return;
@@ -189,7 +190,7 @@ struct {
 } D;
 constexpr int PBAR_W = 200;
 constexpr float PBAR_ZERO = 0.285f;  // 60 kW regen left of zero, 150 kW draw right
-const char *BEST_NAMES[REC_COUNT] = {"Best 0–60", "Best 0–100", "Best 100–0", "Lateral best", "Peak draw", "Peak regen"};
+const char *BEST_NAMES[REC_COUNT] = {"Best 0–60", "Best 0–100", "Best 60–0", "Lateral best", "Peak draw", "Peak regen"};
 const char *BEST_FMT[REC_COUNT] = {"%.1f s", "%.1f s", "%.1f s", "%.2f g", "%.1f kW", "%.1f kW"};
 
 void bestNextCb(lv_event_t *) {
@@ -332,7 +333,8 @@ void updateDrive() {
     lv_obj_set_pos(D.socWin, x0, 0);
     lv_obj_set_width(D.socWin, x1 - x0);
     lv_obj_set_pos(D.socFill, x0, 0);
-    lv_obj_set_width(D.socFill, (int)(g_vs.car.socPct * 2) - x0);
+    int fill = (int)(g_vs.car.socRawPct * 2) - x0;
+    lv_obj_set_width(D.socFill, fill < 0 ? 0 : fill);
     setTextF(D.range, "%d km", (int)lroundf(g_vs.car.rangeKm));
     setColor(D.range, FG);
     setTextF(D.packLine, "%.0f °C · %.0f V", g_vs.car.tempAvg, g_vs.car.packV);
@@ -388,7 +390,7 @@ struct {
   int eLoadedRec = -1;
   bool eHasTrace = false;
 } T;
-const char *REC_NAMES[REC_COUNT] = {"BEST 0–60 KM/H", "BEST 0–100 KM/H", "BEST 100–0 BRAKING",
+const char *REC_NAMES[REC_COUNT] = {"BEST 0–60 KM/H", "BEST 0–100 KM/H", "BEST 60–0 BRAKING",
                                     "MAX LATERAL G", "PEAK BATTERY DRAW", "PEAK BATTERY REGEN"};
 const char *REC_UNITS[REC_COUNT] = {"s", "s", "s", "g", "kW", "kW"};
 const char *REC_FMT[REC_COUNT] = {"%.1f", "%.1f", "%.1f", "%.2f", "%.1f", "%.1f"};
@@ -525,7 +527,7 @@ void updateTrip() {
       switch (i) {
         case REC_0_60:
         case REC_0_100: snprintf(sub, sizeof(sub), "%u valid run%s · %s", r.runs, r.runs == 1 ? "" : "s", r.when); break;
-        case REC_100_0: snprintf(sub, sizeof(sub), "%.0f m · %s", r.aux, r.when); break;
+        case REC_60_0: snprintf(sub, sizeof(sub), "%.0f m · %s", r.aux, r.when); break;
         case REC_LAT: snprintf(sub, sizeof(sub), "%s · %s", r.aux < 0 ? "left" : "right", r.when); break;
         default: snprintf(sub, sizeof(sub), "1 s mean · max %.1f · %s", r.aux, r.when); break;
       }
@@ -598,7 +600,7 @@ void updateTrip() {
     char val[32];
     if (r.valid) snprintf(val, sizeof(val), REC_FMT[T.eventIdx], r.value);
     else snprintf(val, sizeof(val), "—");
-    const char *names[REC_COUNT] = {"Best 0–60 km/h", "Best 0–100 km/h", "Best 100–0 braking",
+    const char *names[REC_COUNT] = {"Best 0–60 km/h", "Best 0–100 km/h", "Best 60–0 braking",
                                     "Max lateral G", "Peak battery draw", "Peak battery regen"};
     setTextF(T.eTitle, "%s   %s %s", names[T.eventIdx], val, r.valid ? REC_UNITS[T.eventIdx] : "");
     if (!r.valid) {
@@ -612,8 +614,8 @@ void updateTrip() {
           setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Stationary start, no rollout · %u valid run%s · GPS gate: 3D fix, 7+ sats, speed accuracy under 0.5 m/s · crossing interpolated between samples",
                    r.socPct, r.packTemp, r.runs, r.runs == 1 ? "" : "s");
           break;
-        case REC_100_0:
-          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Armed above 100 km/h · Distance %.0f m · Max braking %.2f g this session",
+        case REC_60_0:
+          setTextF(T.eMeta, "SOC %.0f %% · Pack %.0f °C · Timed from 60 km/h · Distance %.0f m · Max braking %.2f g this session",
                    r.socPct, r.packTemp, r.aux, g_vs.motion.peakBrake);
           break;
         case REC_LAT:
@@ -830,7 +832,8 @@ void updateBattery() {
 
 // ---- Settings ----------------------------------------------------------------------------
 struct {
-  Segmented night, demo, units;
+  Segmented night, demo, units, obd;
+  lv_obj_t *forget = nullptr, *forgetL = nullptr;
   lv_obj_t *calib = nullptr, *calibL = nullptr, *accelCal = nullptr, *accelCalL = nullptr, *diag = nullptr, *about = nullptr, *bright = nullptr, *dongle = nullptr;
 } G;
 void nightCb(lv_event_t *e) {
@@ -846,6 +849,16 @@ void demoCb(lv_event_t *e) {
   G.demo.select(i);
   if (g_cb.setDemo) g_cb.setDemo(g_demo);
   notifySettings();
+}
+void obdCb(lv_event_t *e) {
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  g_obd = i == 1;
+  G.obd.select(i);
+  if (g_cb.setObd) g_cb.setObd(g_obd);
+}
+void forgetCb(lv_event_t *) {
+  if (g_cb.forgetDongle) g_cb.forgetDongle();
+  setText(G.forgetL, "Forgotten");
 }
 void unitsCb(lv_event_t *e) {
   int i = (int)(intptr_t)lv_event_get_user_data(e);
@@ -899,8 +912,12 @@ void buildSettings(lv_obj_t *p) {
   G.night.select(g_nightMode == -1 ? 0 : (g_nightMode == 1 ? 1 : 2));
   settingRow(p, 0, 3, "Brightness");
   G.bright = rowValue(p, 0, 3, "Auto · 100 %");
+  static const char *OBD[2] = {"Off", "On"};
   settingRow(p, 0, 4, "OBD");
-  rowValue(p, 0, 4, "Phase 3c: dongle not yet paired");
+  G.forget = button(p, 132, srowY(4) + 8, 106, 34, "Forget dongle", &inter_rg_14, FG, PANEL, forgetCb, nullptr);
+  G.forgetL = buttonLabel(G.forget);
+  G.obd = segmented(p, 246, srowY(4) + 8, 68, 34, OBD, 2, obdCb, &inter_rg_14);
+  G.obd.select(g_obd ? 1 : 0);
   settingRow(p, 0, 5, "Storage");
   G.dongle = rowValue(p, 0, 5, "");
   settingRow(p, 0, 6, "Start screen");
@@ -928,8 +945,10 @@ void updateSettings() {
   if (cal == 1) setTextF(G.accelCalL, "Turn %d/%d", g_vs.diag.accCalDirs, 10);
   else if (cal != lastCal) setText(G.accelCalL, cal == 2 ? "Done" : (cal == 3 ? "Failed" : (g_vs.diag.accCalibrated ? "Done" : "Offsets")));
   lastCal = cal;
-  setTextF(G.diag, "GPS %d · IMU %.0f Hz · I2C %lu ms", g_vs.gps.sats, g_vs.imu.rateHz,
-           (unsigned long)g_vs.diag.i2cLongestHoldMs);
+  static const char *const OBD_WORD[6] = {"off", "scan", "connect", "set-up", "", "asleep"};
+  uint8_t os = g_vs.diag.obdState < 6 ? g_vs.diag.obdState : 0;
+  if (os == 4) setTextF(G.diag, "GPS %d · IMU %.0f Hz · OBD %.1f Hz", g_vs.gps.sats, g_vs.imu.rateHz, g_vs.diag.obdHz);
+  else setTextF(G.diag, "GPS %d · IMU %.0f Hz · OBD %s", g_vs.gps.sats, g_vs.imu.rateHz, OBD_WORD[os]);
   setTextF(G.bright, "%s · %u %%", g_nightMode == -1 ? "Auto" : "Manual", g_vs.disp.backlightPct);
   setTextF(G.about, "Mini Dash %s · touch %s", g_version, g_vs.diag.touchId);
   if (g_vs.store.fsOk) {
@@ -1030,7 +1049,7 @@ void updateHeader() {
     setText(H.gps, "GPS acquiring");
     setColor(H.gps, AMBER);
   }
-  const char *obd = !g_vs.car.linked ? "OBD SCAN" : (g_vs.car.asleep ? "CAR ASLEEP" : "OBD LINK");
+  const char *obd = g_vs.diag.obdState == 0 ? "OBD OFF" : (!g_vs.car.linked ? "OBD SCAN" : (g_vs.car.asleep ? "CAR ASLEEP" : "OBD LINK"));
   uint32_t oc = (!g_vs.car.linked || g_vs.car.asleep) ? MUTED : LIME;
   setText(H.obdL, obd);
   setColor(H.obdL, oc);
@@ -1089,6 +1108,7 @@ void applySettings(const UiSettings &st) {
   g_units_mph = st.mph;
   g_nightMode = st.nightMode;
   g_demo = st.demo;
+  g_obd = st.obd;
   VsLock lk;
   if (lk.ok()) Vs::raw().disp.bestField = st.bestField % REC_COUNT;
 }

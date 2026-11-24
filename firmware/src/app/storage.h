@@ -68,6 +68,14 @@ void clearLifetime();
 
 uint32_t nextTripId();  // monotonic, persisted in NVS
 
+// OBD: on/off and the paired dongle (address as text, BLE address type). Separate keys, not
+// part of the settings blob, so pairing never touches the calibration.
+bool loadObdEnabled();
+void saveObdEnabled(bool on);
+bool loadObdDongle(char *addr, size_t n, uint8_t *type);
+void saveObdDongle(const char *addr, uint8_t type);
+void clearObdDongle();
+
 // Completed trips, newest first. index 0 is the most recent.
 int tripCount();
 bool loadTrip(int indexFromNewest, TripSummary &out);

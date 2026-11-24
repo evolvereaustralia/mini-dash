@@ -42,15 +42,18 @@ struct MotionData {
 };
 
 struct CarData {
-  uint32_t fastStampMs = 0, slowStampMs = 0;
+  uint32_t fastStampMs = 0, slowStampMs = 0;  // pack volts and amps (power); the slow group
+  uint32_t wheelStampMs = 0, driveStampMs = 0;  // wheel speeds; torque, motor speed and pedal
   bool linked = false;   // BLE connected to the dongle
   bool asleep = false;   // connected but requests time out
-  float socPct = 0, socMinPct = 0, socMaxPct = 100;  // displayed SOC and usable window
+  // socPct is what the dash shows: the pack's own SOC (socRawPct) scaled between the usable
+  // limits the battery ECU reports (socMinPct, socMaxPct).
+  float socPct = 0, socMinPct = 0, socMaxPct = 100, socRawPct = 0;
   float packV = 0, packA = 0, powerKw = 0;           // positive = discharging
   float tempMin = 0, tempAvg = 0, tempMax = 0;
   float cellAvgV = 0, cellMinV = 0, cellMaxV = 0;
   float motorTemp1 = 0, motorTemp2 = 0;
-  float torqueNm = 0, torqueReqNm = 0;
+  float torqueNm = 0, torqueReqNm = 0, motorRpm = 0;
   float pedalPct = 0;
   float wheelKph[4] = {0, 0, 0, 0};
   float wheelAvgKph = 0;
@@ -71,11 +74,11 @@ struct TripData {
   bool energyValid = false;  // false until car data has been live
 };
 
-// Records (CLAUDE.md section 4, Trip): 0 = best 0-60 s, 1 = best 0-100 s, 2 = best 100-0 s
+// Records (CLAUDE.md section 4, Trip): 0 = best 0-60 s, 1 = best 0-100 s, 2 = best 60-0 s
 // (aux = distance m), 3 = max lateral g (aux = signed: negative left), 4 = peak draw kW
 // (aux = instantaneous max), 5 = peak regen kW (aux = instantaneous max).
 constexpr int REC_COUNT = 6;
-enum RecordId { REC_0_60 = 0, REC_0_100, REC_100_0, REC_LAT, REC_DRAW, REC_REGEN };
+enum RecordId { REC_0_60 = 0, REC_0_100, REC_60_0, REC_LAT, REC_DRAW, REC_REGEN };
 
 struct Record {
   bool valid = false;
@@ -107,7 +110,9 @@ struct DisplayState {
 struct Diagnostics {
   uint32_t i2cLongestHoldMs = 0, i2cOverHold = 0;
   uint32_t lvglFrames = 0;
-  float gpsHz = 0, imuHz = 0, obdHz = 0;
+  float gpsHz = 0, imuHz = 0, obdHz = 0;  // obdHz: battery power updates per second
+  uint8_t obdState = 0;  // Obd::State: 0 off, 1 scanning, 2 connecting, 3 setting up, 4 live, 5 car asleep
+  uint32_t obdRequests = 0, obdTimeouts = 0;
   bool touchOk = false;
   char touchId[5] = "";
   // Attitude filter: sensor tilt from level, the correction applied per sample (settles near

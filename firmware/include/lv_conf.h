@@ -1,6 +1,6 @@
 /**
  * Mini Dash lv_conf.h: Waveshare's 4.3C lv_conf.h (examples/arduino/libraries) with these changes:
- * LV_MEM_SIZE 96 KB, logging on at WARN through printf, demos off, Montserrat 12/26/44 off
+ * LV_MEM_SIZE 96 KB (in PSRAM), logging on at WARN through printf, demos off, Montserrat 12/26/44 off
  * (14 stays the default and 16 provides LV_SYMBOL_*), snapshot on for screenshots over serial.
  * Project fonts are the converted Inter faces in src/ui/fonts, declared in src/ui/theme.h.
  *
@@ -62,8 +62,12 @@
     #define LV_MEM_ADR 0     /*0: unused*/
     /*Instead of an address give a memory allocator that will be called to get a memory pool for LVGL. E.g. my_malloc*/
     #if LV_MEM_ADR == 0
-        #undef LV_MEM_POOL_INCLUDE
-        #undef LV_MEM_POOL_ALLOC
+        /* The pool lives in PSRAM since 24 Nov 2026: with the Bluetooth stack linked in, the
+           96 KB as an internal static array left 28 KB of heap and NimBLE could not start.
+           The draw buffer and the draw code stay internal, which is what the frame time
+           depends on (firmware/README.md, "Display pipeline"). */
+        #define LV_MEM_POOL_INCLUDE <esp_heap_caps.h>
+        #define LV_MEM_POOL_ALLOC(size) heap_caps_malloc(size, MALLOC_CAP_SPIRAM)
     #endif
 
 #else       /*LV_MEM_CUSTOM*/

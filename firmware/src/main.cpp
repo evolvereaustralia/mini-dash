@@ -15,6 +15,7 @@
 #include "app/clock.h"
 #include "app/demo_source.h"
 #include "app/lvgl_port.h"
+#include "app/obd_client.h"
 #include "app/sensors.h"
 #include "app/storage.h"
 #include "app/touch_gt911.h"
@@ -416,6 +417,16 @@ void handleSerial() {
       bypass = !bypass;
       LvglPort::setTouchBypass(bypass);
       Serial.printf("touch bypass %s\n", bypass ? "on" : "off");
+    } else if (ch == 'o') {  // OBD on or off, stored, as the Settings switch
+      Obd::setEnabled(!Obd::enabled());
+      Serial.printf("OBD %s (stored)\n", Obd::enabled() ? "on" : "off");
+    } else if (ch == 'O') {
+      Obd::printStatus();
+    } else if (ch == 'L') {  // every OBD request and reply on serial
+      Obd::setTrafficLog(!Obd::trafficLog());
+      Serial.printf("OBD traffic log %s\n", Obd::trafficLog() ? "on" : "off");
+    } else if (ch == 'F') {
+      Obd::forgetDongle();
     } else if (ch == 'r') {
       ESP.restart();
     }
@@ -451,6 +462,8 @@ void setup() {
     cb.setNightMode = uiSetNight;
     cb.calibrateMounting = uiCalibrate;
     cb.calibrateAccel = uiCalibrateAccel;
+    cb.setObd = [](bool on) { Obd::setEnabled(on); };
+    cb.forgetDongle = []() { Obd::forgetDongle(); };
     cb.resetTrip = uiResetTrip;
     cb.resetPeaks = uiResetPeaks;
     cb.clearRecords = uiClearRecords;
@@ -484,6 +497,7 @@ void setup() {
   us.mph = g_settings.mph;
   us.nightMode = g_settings.nightMode;
   us.demo = g_settings.demo;
+  us.obd = Storage::loadObdEnabled();
   us.bestField = g_settings.bestField;
   {
     LvLock lk;
@@ -509,10 +523,11 @@ void setup() {
   Sensors::setNightMode(g_settings.nightMode);
   {
     LvLock lk;
-    Ui::setBootStatus(Sensors::gpsOk() ? "GPS acquiring" : "GPS absent", "OBD off (phase 3c)",
+    Ui::setBootStatus(Sensors::gpsOk() ? "GPS acquiring" : "GPS absent", Storage::loadObdEnabled() ? "OBD scanning" : "OBD off",
                       Sensors::imuOk() ? "IMU ready" : "IMU absent");
   }
   Demo::start(&g_engine);
+  Obd::start();  // its own task; Bluetooth comes up there, never in the way of the screen
   Demo::setEnabled(g_settings.demo);  // stored; off by default, Settings turns the replay on for the bench
   startNewTrip();
   Serial.println("keys: d demo, 1..9/0 backlight, p screenshot, n next tab, D/R/Y/E/B page, x settings, i scan, r reboot");
@@ -570,12 +585,12 @@ void loop() {
     Ui::timing(&tk, &pl);
     uint32_t gm, gb, gn, ga;
     Sensors::gpsStats(&gm, &gb, &gn, &ga);
-    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B refused %lu | att tilt %.1f corr %.3f bias %.2f dps lonbias %+.3f %s%s | flash writes %lu | heap %lu psram %lu i2c %lu ms by %s\n",
+    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B refused %lu | obd %s %.1f Hz soc %.0f %% | att tilt %.1f corr %.3f bias %.2f dps lonbias %+.3f %s%s | flash writes %lu | heap %lu psram %lu i2c %lu ms by %s\n",
                   (unsigned long)(millis() / 1000), (int)Ui::page(), vs.demo, vs.disp.speedKph, vs.motion.latG,
                   vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz, vs.disp.lux,
                   vs.disp.night ? "night" : "day", vs.disp.backlightPct,
                   (unsigned long)LvglPort::frameCount(), (unsigned long)fl, (unsigned long)wt, (unsigned long)to,
-                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.attTrust ? "trust" : "hold", vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
+                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), Obd::stateName(vs.diag.obdState), vs.diag.obdHz, vs.car.socPct, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.attTrust ? "trust" : "hold", vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
                   (unsigned long)I2cBus::longestHoldMs(), I2cBus::longestHolder());
   }
   delay(10);

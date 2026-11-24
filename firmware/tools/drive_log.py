@@ -7,7 +7,7 @@
 #   ~/.platformio/penv/bin/python tools/drive_log.py /dev/cu.usbmodem1101 3600
 #
 # Writes docs/drive-logs/drive-<date>-<time>.log. Resets the board at the start (so the log
-# begins with the boot banner) and sends 'g' after 5 s. PlatformIO's own Python has pyserial;
+# begins with the boot banner), sends 'g' after 5 s and 'O' (OBD status) once a minute. PlatformIO's own Python has pyserial;
 # the system python3 does not.
 import glob, os, sys, time
 from datetime import datetime
@@ -28,12 +28,15 @@ s = serial.Serial(port, 115200, timeout=0.2)
 s.dtr = False; s.rts = True; time.sleep(0.1); s.rts = False; s.dtr = True
 t0 = time.time()
 sent = False
+last_status = time.time()
 print(f"logging {port} to {path}; Ctrl-C to stop")
 with open(path, "wb") as f:
     try:
         while time.time() - t0 < secs:
             if not sent and time.time() - t0 >= 5:
                 s.write(b"g"); sent = True
+            if time.time() - last_status >= 60:  # OBD rates and per-identifier counts once a minute
+                s.write(b"O"); last_status = time.time()
             data = s.read(4096)
             if data:
                 f.write(data); f.flush()

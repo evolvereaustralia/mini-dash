@@ -11,7 +11,7 @@ namespace {
 constexpr const char *NVS_NS = "minidash";
 constexpr const char *FS_LABEL = "ffat";  // the 9 MB data partition of app3M_fat9M_16MB
 constexpr uint32_t TRIP_MAGIC = 0x54524950;  // "TRIP"
-constexpr uint16_t TRIP_VERSION = 1;
+constexpr uint16_t TRIP_VERSION = 2;  // 2: the braking record is 60-0 (was 100-0 in version 1)
 constexpr uint32_t EVENT_MAGIC = 0x45564E54;  // "EVNT"
 
 Preferences g_prefs;
@@ -43,8 +43,9 @@ bool readTrip(const char *path, Storage::TripSummary &out) {
   TripFile tf;
   size_t r = f.read(reinterpret_cast<uint8_t *>(&tf), sizeof(tf));
   f.close();
-  if (r != sizeof(tf) || tf.magic != TRIP_MAGIC || tf.version != TRIP_VERSION || tf.size != sizeof(Storage::TripSummary)) return false;
+  if (r != sizeof(tf) || tf.magic != TRIP_MAGIC || (tf.version != TRIP_VERSION && tf.version != 1) || tf.size != sizeof(Storage::TripSummary)) return false;
   out = tf.body;
+  if (tf.version == 1) out.records.r[REC_60_0] = Record();  // a 100-0 figure: not comparable
   return true;
 }
 
@@ -129,9 +130,20 @@ void saveSettings(const Settings &s) {
 }
 
 void loadLifetime(RecordSet &all) {
-  if (g_prefs.getUChar("life_v", 0) != 1) return;
-  RecordSet tmp;
-  if (g_prefs.getBytes("life", &tmp, sizeof(tmp)) == sizeof(tmp)) all = tmp;
+  // The braking slot held 100-0 figures before 24 Nov 2026: drop a stored one, once. The flag
+  // is set even when nothing is stored, so a 60-0 record saved later is never dropped.
+  bool migrated = g_prefs.getBool("brk60", false);
+  if (g_prefs.getUChar("life_v", 0) == 1) {
+    RecordSet tmp;
+    if (g_prefs.getBytes("life", &tmp, sizeof(tmp)) == sizeof(tmp)) {
+      if (!migrated) {
+        tmp.r[REC_60_0] = Record();
+        g_prefs.putBytes("life", &tmp, sizeof(tmp));
+      }
+      all = tmp;
+    }
+  }
+  if (!migrated) g_prefs.putBool("brk60", true);
 }
 
 void saveLifetime(const RecordSet &all) {
@@ -149,6 +161,28 @@ uint32_t nextTripId() {
   uint32_t id = g_prefs.getULong("trip_id", 0) + 1;
   g_prefs.putULong("trip_id", id);
   return id;
+}
+
+bool loadObdEnabled() { return g_prefs.getBool("obd_on", true); }
+void saveObdEnabled(bool on) {
+  g_writes++;
+  g_prefs.putBool("obd_on", on);
+}
+bool loadObdDongle(char *addr, size_t n, uint8_t *type) {
+  addr[0] = 0;
+  if (!g_prefs.isKey("obd_addr")) return false;
+  g_prefs.getString("obd_addr", addr, n);
+  *type = g_prefs.getUChar("obd_type", 0);
+  return addr[0] != 0;
+}
+void saveObdDongle(const char *addr, uint8_t type) {
+  g_writes++;
+  g_prefs.putString("obd_addr", addr);
+  g_prefs.putUChar("obd_type", type);
+}
+void clearObdDongle() {
+  g_prefs.remove("obd_addr");
+  g_prefs.remove("obd_type");
 }
 
 int tripCount() {
@@ -288,7 +322,7 @@ void aggregateDay(uint32_t dayUtc, RecordSet &best, DayStats &stats, uint32_t ex
     for (int r = 0; r < REC_COUNT; r++) {
       const Record &cand = t.records.r[r];
       if (!cand.valid) continue;
-      bool lower = r <= REC_100_0;
+      bool lower = r <= REC_60_0;
       Record &cur = best.r[r];
       if (!cur.valid || (lower ? cand.value < cur.value : cand.value > cur.value)) {
         cur = cand;

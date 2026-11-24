@@ -9,6 +9,7 @@ namespace {
 constexpr float ARM_KPH = 1.0f;
 constexpr float ARM_G = 0.05f;
 constexpr uint32_t ARM_MS = 1000;
+constexpr float BRAKE_FROM_KPH = 60.0f;
 constexpr uint32_t MAX_GAP_MS = 300;
 constexpr float GATE_SPEED_ACC = 0.5f;  // m/s
 constexpr uint8_t GATE_SATS = 7;
@@ -198,14 +199,16 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
     roll_.running = false;
   }
 
-  // 100-0 braking: time and distance from the downward 100 crossing to under 1 km/h.
+  // 60-0 braking: time and distance from the downward 60 crossing to under 1 km/h. It was
+  // 100-0 until 24 Nov 2026: a stop from 100 km/h is not something Logan's roads allow, a
+  // stop from 60 happens on every drive.
   Brake &b = brake_;
   if (valid && !gap) {
-    if (!b.armed && t.lastKph >= 100.0f && kph < 100.0f && lonG < -0.05f) {
+    if (!b.armed && t.lastKph >= BRAKE_FROM_KPH && kph < BRAKE_FROM_KPH && lonG < -0.05f) {
       b.armed = true;
-      b.startMs = (uint32_t)crossingMs(t.lastKph, t.lastMs, kph, nowMs, 100.0f);
+      b.startMs = (uint32_t)crossingMs(t.lastKph, t.lastMs, kph, nowMs, BRAKE_FROM_KPH);
       float dtS = (float)(nowMs - b.startMs) / 1000.0f;
-      b.distanceM = (100.0f + kph) / 2.0f / 3.6f * dtS;
+      b.distanceM = (BRAKE_FROM_KPH + kph) / 2.0f / 3.6f * dtS;
     } else if (b.armed) {
       float dtS = (float)(nowMs - b.lastMs) / 1000.0f;
       b.distanceM += (b.lastKph + kph) / 2.0f / 3.6f * dtS;
@@ -213,7 +216,7 @@ void TripEngine::checkSpeedTimers(uint32_t nowMs, float kph, bool valid, float l
         b.armed = false;  // speed rose again: not a stop
       } else if (kph < ARM_KPH) {
         float s = (crossingMs(b.lastKph, b.lastMs, kph, nowMs, ARM_KPH) - (float)b.startMs) / 1000.0f;
-        accept(REC_100_0, s, b.distanceM, nowMs, soc, temp, true);
+        accept(REC_60_0, s, b.distanceM, nowMs, soc, temp, true);
         b.armed = false;
       }
     }

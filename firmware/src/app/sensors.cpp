@@ -395,7 +395,8 @@ void sensorTask(void *) {
         // get the raw GPS sample (section 5, paths 1 and 2).
         float kph = 0;
         float rawKph = vs.gps.speedMps * 3.6f;
-        if (carFresh) {
+        bool wheelsFresh = vs.car.linked && !vs.car.asleep && vs.car.wheelStampMs && now - vs.car.wheelStampMs < STALE_OBD_FAST_MS;
+        if (wheelsFresh) {
           kph = vs.car.wheelAvgKph;
           vs.disp.speedSource = SpeedSource::Wheels;
         } else if (gpsFresh) {
@@ -406,7 +407,7 @@ void sensorTask(void *) {
         }
         vs.disp.speedKph = kph;
         bool motionFresh = vs.motion.stampMs && now - vs.motion.stampMs < STALE_IMU_MS;
-        g_engine->update(now, kph, gpsFresh || carFresh, rawKph, gpsFresh, vs.gps.speedAccMps, vs.gps.sats,
+        g_engine->update(now, kph, gpsFresh || wheelsFresh, rawKph, gpsFresh, vs.gps.speedAccMps, vs.gps.sats,
                          vs.motion.latG, vs.motion.lonG, motionFresh, vs.car.powerKw, carFresh, vs.car.socPct,
                          vs.car.tempAvg, vs.gps.altM);
         g_engine->publish(vs);

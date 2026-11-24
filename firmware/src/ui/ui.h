@@ -18,6 +18,7 @@ struct UiSettings {
   bool mph = false;
   int8_t nightMode = -1;
   bool demo = true;
+  bool obd = true;
   uint8_t bestField = 0;
 };
 
@@ -25,6 +26,8 @@ struct Callbacks {
   void (*setDemo)(bool on) = nullptr;
   void (*setNightMode)(int mode) = nullptr;  // -1 auto, 0 day, 1 night
   void (*calibrateMounting)() = nullptr;
+  void (*setObd)(bool on) = nullptr;
+  void (*forgetDongle)() = nullptr;
   void (*calibrateAccel)() = nullptr;  // sphere-fit offsets, the user turns the device
   void (*resetTrip)() = nullptr;
   void (*resetPeaks)() = nullptr;

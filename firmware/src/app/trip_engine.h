@@ -6,8 +6,9 @@
 // Timing path: raw speed samples with crossing-time interpolation. Arm when speed is under
 // 1 km/h and |longitudinal g| under 0.05 for 1 s with the speed source valid; start on the
 // crossing of 1 km/h; 0-60 and 0-100 are the interpolated crossing times; a run is dropped if
-// the source goes invalid or a sample gap exceeds 300 ms. 100-0 arms above 100 km/h and takes
-// time and distance from the 100 crossing to the first sample under 1 km/h with braking g.
+// the source goes invalid or a sample gap exceeds 300 ms. 60-0 braking starts on a
+// downward crossing of 60 km/h under braking g and takes time and distance from that crossing
+// to the first sample under 1 km/h; a rise in speed on the way cancels it.
 // 60-100 is a rolling run from any crossing of 60 upward to 100. Power peaks are one-second
 // means; the instantaneous maximum is kept in aux.
 //

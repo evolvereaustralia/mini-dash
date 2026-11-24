@@ -174,8 +174,8 @@ const S = {
   night: q.get('night') === '1',
 };
 
-// Records: 0-60, 0-100, 100-0 braking (time, distance), max lateral, peak draw, peak regen.
-const metricNames = ['Best 0–60 km/h','Best 0–100 km/h','Best 100–0 braking','Max lateral G','Peak battery draw','Peak battery regen'];
+// Records: 0-60, 0-100, 60-0 braking (time, distance), max lateral, peak draw, peak regen.
+const metricNames = ['Best 0–60 km/h','Best 0–100 km/h','Best 60–0 braking','Max lateral G','Peak battery draw','Peak battery regen'];
 const metricUnits = ['s','s','s','g','kW','kW'];
 const rec = {
   trip:  {ctx:'24 Oct · 14:06–14:44', values:['3.8','7.4','2.9','0.68','141.2','44.8'], sub:['3 valid runs','2 valid runs','41 m','L 0.62 · R 0.68','1 s mean','1 s mean'],
@@ -188,7 +188,7 @@ const rec = {
           times:['24 Oct','24 Oct','18 Oct','12 Oct','18 Oct','18 Oct'], compare:['Previous 3.9 s','Previous 7.4 s','Previous 2.9 s','Previous 0.78 g','Previous 143.9 kW','Previous 47.6 kW'],
           bestFlags:[1,1,0,0,0,0], distance:'1248', moving:'31:42', avg:'39.4', vmax:'118', energy:'183.5', recovered:'24.7', eff:'147', soc:'—', s60100:'3.5', brakeG:'0.89', accelG:'0.47', alt:'—'},
 };
-const bestChoices = [['Lateral best','0.68 g'],['Peak regen','44.8 kW'],['Best 0–60','3.8 s'],['Best 0–100','7.4 s'],['Best 100–0','2.9 s'],['Peak draw','141.2 kW']];
+const bestChoices = [['Lateral best','0.68 g'],['Peak regen','44.8 kW'],['Best 0–60','3.8 s'],['Best 0–100','7.4 s'],['Best 60–0','1.9 s'],['Peak draw','141.2 kW']];
 
 const panel = document.getElementById('panel');
 const sc = () => scenes[S.scene];
@@ -281,7 +281,7 @@ function eventPage(r){
     for(let n=0;n<=40;n++){ const t=n/40; d+=`${n?'L':'M'}${170+t*560},${base-s.f(t)/s.max*amp} `; }
     return `<text x="0" y="${base-14}">${s.label} · ${s.unit}</text><text x="0" y="${base+6}">+${s.max} / 0 / −${s.max}</text><path class="grid" d="M170 ${base}H730"/><path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.5"/>`; }).join('');
   const meta = i<2 ? `<span>Stationary start · no rollout</span><span>${r.sub[i]}</span><span>GPS 10 Hz · 9 sats · ±0.05 s</span>`
-    : i===2 ? `<span>Armed above 100 km/h</span><span>Distance <b>${r.sub[2]}</b></span><span>Combined peak <b>0.79 g</b></span>`
+    : i===2 ? `<span>Timed from 60 km/h</span><span>Distance <b>${r.sub[2]}</b></span><span>Combined peak <b>0.79 g</b></span>`
     : i===3 ? `<span>Filtered IMU peak (5 Hz)</span><span>${r.sub[3]}</span>`
     : `<span>1 s mean</span><span>Instantaneous max <b>${i===4?'147.3':'49.2'} kW</b></span>`;
   return `<div class="content"><div class="event-head"><div><div class="label">${scopes[S.scope]} · ${r.times[i]}</div>
