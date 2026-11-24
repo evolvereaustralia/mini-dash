@@ -225,16 +225,20 @@ namespace {
 // Does the partition already hold a littlefs? Its superblock carries the ASCII tag "littlefs" in
 // one of the first two blocks. Used to tell a partition that has never been set up from one
 // that has data and merely failed to mount.
-bool partitionHasLittlefs() {
+// True only if the data partition is certainly unused: found, readable, and its first two
+// blocks (where littlefs keeps both copies of its superblock) fully erased. Anything else,
+// a littlefs that will not mount, some other content, a read error, counts as "may hold data"
+// and is never formatted without the owner's say-so.
+bool partitionIsBlank() {
   const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, FS_LABEL);
   if (!part) return false;
   static uint8_t block[512];
-  for (uint32_t off : {0u, 4096u}) {
-    if (esp_partition_read(part, off, block, sizeof(block)) != ESP_OK) continue;
-    for (size_t k = 0; k + 8 <= sizeof(block); k++)
-      if (memcmp(block + k, "littlefs", 8) == 0) return true;
+  for (uint32_t off = 0; off < 2 * 4096; off += sizeof(block)) {
+    if (esp_partition_read(part, off, block, sizeof(block)) != ESP_OK) return false;
+    for (size_t k = 0; k < sizeof(block); k++)
+      if (block[k] != 0xFF) return false;
   }
-  return false;
+  return true;
 }
 
 void removeLeftovers(const char *dirPath) {  // second files left by a cut during a write
@@ -258,18 +262,18 @@ void removeLeftovers(const char *dirPath) {  // second files left by a cut durin
 bool begin() {
   g_prefs.begin(NVS_NS, false);
   // A mount failure must never format a partition that has trips on it (review finding 05):
-  // format only when no littlefs has ever been written there. Otherwise storage stays off for
-  // this boot, nothing is erased, and formatting takes a deliberate serial command.
+  // format only when the partition is blank. Otherwise storage stays off for this boot,
+  // nothing is erased, and formatting takes a deliberate serial command.
   g_fsOk = LittleFS.begin(false, FS_MOUNT, 8, FS_LABEL);
   if (!g_fsOk) {
-    if (!partitionHasLittlefs()) {
-      Serial.println("storage: the data partition has never been set up, formatting it once");
+    if (partitionIsBlank()) {
+      Serial.println("storage: the data partition is blank, formatting it once");
       g_fsOk = LittleFS.begin(true, FS_MOUNT, 8, FS_LABEL);
     } else {
       g_fsNeedsOwner = true;
       g_faults++;
-      Serial.println("storage: LittleFS has data but did NOT mount. Nothing was erased. Trips and traces are off this boot; "
-                     "if this repeats, the serial command KK formats the partition (all trips lost).");
+      Serial.println("storage: the data partition is not blank and did NOT mount. Nothing was erased. Trips and traces are off "
+                     "this boot; if this repeats, the serial command KK formats the partition (all trips lost).");
     }
   }
   if (g_fsOk) {
