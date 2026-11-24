@@ -28,6 +28,7 @@ struct Callbacks {
   void (*calibrateMounting)() = nullptr;
   void (*setObd)(bool on) = nullptr;
   void (*forgetDongle)() = nullptr;
+  void (*pairDongle)() = nullptr;  // look for a dongle now (only when none is stored)
   void (*calibrateAccel)() = nullptr;  // sphere-fit offsets, the user turns the device
   void (*resetTrip)() = nullptr;
   void (*resetPeaks)() = nullptr;

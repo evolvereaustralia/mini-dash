@@ -122,7 +122,8 @@ struct Diagnostics {
   uint32_t i2cLongestHoldMs = 0, i2cOverHold = 0;
   uint32_t lvglFrames = 0;
   float gpsHz = 0, imuHz = 0, obdHz = 0;  // obdHz: battery power updates per second
-  uint8_t obdState = 0;  // Obd::State: 0 off, 1 scanning, 2 connecting, 3 setting up, 4 live, 5 car asleep
+  uint8_t obdState = 0;  // Obd::State: 0 off, 1 scanning, 2 connecting, 3 setting up, 4 live, 5 car asleep, 6 none paired, 7 pairing
+  bool obdBound = false;  // a dongle is stored
   uint32_t obdRequests = 0, obdTimeouts = 0;
   bool touchOk = false;
   char touchId[5] = "";

@@ -427,6 +427,9 @@ void handleSerial() {
       Serial.printf("OBD traffic log %s\n", Obd::trafficLog() ? "on" : "off");
     } else if (ch == 'F') {
       Obd::forgetDongle();
+    } else if (ch == 'P') {  // pair with a dongle now, as the Settings button (only when none is stored)
+      Obd::requestPairing();
+      Serial.println(Obd::paired() ? "OBD: a dongle is already paired; F forgets it" : "OBD: pairing for 30 s");
     } else if (ch == 'r') {
       ESP.restart();
     }
@@ -464,6 +467,7 @@ void setup() {
     cb.calibrateAccel = uiCalibrateAccel;
     cb.setObd = [](bool on) { Obd::setEnabled(on); };
     cb.forgetDongle = []() { Obd::forgetDongle(); };
+    cb.pairDongle = []() { Obd::requestPairing(); };
     cb.resetTrip = uiResetTrip;
     cb.resetPeaks = uiResetPeaks;
     cb.clearRecords = uiClearRecords;

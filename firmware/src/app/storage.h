@@ -72,9 +72,18 @@ uint32_t nextTripId();  // monotonic, persisted in NVS
 // part of the settings blob, so pairing never touches the calibration.
 bool loadObdEnabled();
 void saveObdEnabled(bool on);
-bool loadObdDongle(char *addr, size_t n, uint8_t *type);
-void saveObdDongle(const char *addr, uint8_t type);
-void clearObdDongle();
+// The paired dongle as ONE record, so an address can never be stored with another dongle's
+// address type (review finding 39). An empty address is the explicit "none" state, written
+// by Forget, so an older build's keys cannot bring a forgotten dongle back.
+struct ObdBinding {
+  uint8_t version = 1;
+  uint8_t type = 0;      // BLE address type
+  char addr[18] = "";    // "aa:bb:cc:dd:ee:ff"
+  char name[24] = "";
+};
+bool loadObdBinding(ObdBinding &out);   // true when a dongle is stored; migrates the two-key form once
+bool saveObdBinding(const ObdBinding &b);  // true only if the write was accepted
+bool clearObdBinding();
 
 // Completed trips, newest first. index 0 is the most recent.
 int tripCount();

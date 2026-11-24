@@ -867,9 +867,14 @@ void obdCb(lv_event_t *e) {
   G.obd.select(i);
   if (g_cb.setObd) g_cb.setObd(g_obd);
 }
+// One button, two meanings: with a dongle stored it forgets it, with none it starts pairing.
+// The label follows the stored state, not the tap (review finding 34).
 void forgetCb(lv_event_t *) {
-  if (g_cb.forgetDongle) g_cb.forgetDongle();
-  setText(G.forgetL, "Forgotten");
+  if (g_vs.diag.obdBound) {
+    if (g_cb.forgetDongle) g_cb.forgetDongle();
+  } else if (g_cb.pairDongle) {
+    g_cb.pairDongle();
+  }
 }
 void unitsCb(lv_event_t *e) {
   int i = (int)(intptr_t)lv_event_get_user_data(e);
@@ -925,7 +930,7 @@ void buildSettings(lv_obj_t *p) {
   G.bright = rowValue(p, 0, 3, "Auto · 100 %");
   static const char *OBD[2] = {"Off", "On"};
   settingRow(p, 0, 4, "OBD");
-  G.forget = button(p, 132, srowY(4) + 8, 106, 34, "Forget dongle", &inter_rg_14, FG, PANEL, forgetCb, nullptr);
+  G.forget = button(p, 132, srowY(4) + 8, 106, 34, "Pair dongle", &inter_rg_14, FG, PANEL, forgetCb, nullptr);
   G.forgetL = buttonLabel(G.forget);
   G.obd = segmented(p, 246, srowY(4) + 8, 68, 34, OBD, 2, obdCb, &inter_rg_14);
   G.obd.select(g_obd ? 1 : 0);
@@ -956,8 +961,9 @@ void updateSettings() {
   if (cal == 1) setTextF(G.accelCalL, "Turn %d/%d", g_vs.diag.accCalDirs, 10);
   else if (cal != lastCal) setText(G.accelCalL, cal == 2 ? "Done" : (cal == 3 ? "Failed" : (g_vs.diag.accCalibrated ? "Done" : "Offsets")));
   lastCal = cal;
-  static const char *const OBD_WORD[6] = {"off", "scan", "connect", "set-up", "", "asleep"};
-  uint8_t os = g_vs.diag.obdState < 6 ? g_vs.diag.obdState : 0;
+  static const char *const OBD_WORD[8] = {"off", "scan", "connect", "set-up", "", "asleep", "not paired", "pairing"};
+  uint8_t os = g_vs.diag.obdState < 8 ? g_vs.diag.obdState : 0;
+  setText(G.forgetL, g_vs.diag.obdState == 7 ? "Pairing..." : (g_vs.diag.obdBound ? "Forget dongle" : "Pair dongle"));
   if (os == 4) setTextF(G.diag, "GPS %d · IMU %.0f Hz · OBD %.1f Hz", g_vs.gps.sats, g_vs.imu.rateHz, g_vs.diag.obdHz);
   else setTextF(G.diag, "GPS %d · IMU %.0f Hz · OBD %s", g_vs.gps.sats, g_vs.imu.rateHz, OBD_WORD[os]);
   setTextF(G.bright, "%s · %u %%", g_nightMode == -1 ? "Auto" : "Manual", g_vs.disp.backlightPct);
@@ -1063,7 +1069,12 @@ void updateHeader() {
     setText(H.gps, "GPS acquiring");
     setColor(H.gps, AMBER);
   }
-  const char *obd = g_vs.diag.obdState == 0 ? "OBD OFF" : (!g_vs.car.linked ? "OBD SCAN" : (g_vs.car.asleep ? "CAR ASLEEP" : "OBD LINK"));
+  const char *obd = g_vs.diag.obdState == 0   ? "OBD OFF"
+                    : g_vs.diag.obdState == 6 ? "NO DONGLE"
+                    : g_vs.diag.obdState == 7 ? "PAIRING"
+                    : !g_vs.car.linked        ? "OBD SCAN"
+                    : g_vs.car.asleep         ? "CAR ASLEEP"
+                                              : "OBD LINK";
   uint32_t oc = (!g_vs.car.linked || g_vs.car.asleep) ? MUTED : LIME;
   setText(H.obdL, obd);
   setColor(H.obdL, oc);

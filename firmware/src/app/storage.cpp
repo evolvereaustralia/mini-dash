@@ -168,21 +168,41 @@ void saveObdEnabled(bool on) {
   g_writes++;
   g_prefs.putBool("obd_on", on);
 }
-bool loadObdDongle(char *addr, size_t n, uint8_t *type) {
-  addr[0] = 0;
-  if (!g_prefs.isKey("obd_addr")) return false;
-  g_prefs.getString("obd_addr", addr, n);
-  *type = g_prefs.getUChar("obd_type", 0);
-  return addr[0] != 0;
-}
-void saveObdDongle(const char *addr, uint8_t type) {
+bool saveObdBinding(const ObdBinding &b) {
   g_writes++;
-  g_prefs.putString("obd_addr", addr);
-  g_prefs.putUChar("obd_type", type);
+  return g_prefs.putBytes("obd_bind", &b, sizeof(b)) == sizeof(b);
 }
-void clearObdDongle() {
+bool clearObdBinding() {
+  ObdBinding none;
+  bool ok = saveObdBinding(none);
   g_prefs.remove("obd_addr");
   g_prefs.remove("obd_type");
+  return ok;
+}
+bool loadObdBinding(ObdBinding &out) {
+  out = ObdBinding();
+  ObdBinding b;
+  if (g_prefs.isKey("obd_bind")) {
+    if (g_prefs.getBytes("obd_bind", &b, sizeof(b)) != sizeof(b) || b.version != 1) return false;
+    b.addr[sizeof(b.addr) - 1] = 0;
+    b.name[sizeof(b.name) - 1] = 0;
+    out = b;
+    return out.addr[0] != 0;
+  }
+  // The form used until 24 Nov 2026: address and type as two keys. Carried over once; the old
+  // keys go only after the new record is in place.
+  if (!g_prefs.isKey("obd_addr")) return false;
+  char addr[20] = "";
+  g_prefs.getString("obd_addr", addr, sizeof(addr));
+  if (!addr[0] || strlen(addr) >= sizeof(b.addr)) return false;
+  strncpy(b.addr, addr, sizeof(b.addr) - 1);
+  b.type = g_prefs.getUChar("obd_type", 0);
+  if (saveObdBinding(b)) {
+    g_prefs.remove("obd_addr");
+    g_prefs.remove("obd_type");
+  }
+  out = b;
+  return true;
 }
 
 int tripCount() {
