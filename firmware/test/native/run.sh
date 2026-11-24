@@ -12,3 +12,5 @@ clang++ -std=c++17 -O1 -Wall -I../../include -o /tmp/minidash_test_obd test_obd.
 /tmp/minidash_test_obd
 clang++ -std=c++17 -O1 -Wall -I../../include -I../../src/app -o /tmp/minidash_test_trip test_trip.cpp ../../src/app/trip_engine.cpp
 /tmp/minidash_test_trip
+clang++ -std=c++17 -O1 -Wall -o /tmp/minidash_test_attitude test_attitude.cpp ../../src/app/attitude.cpp ../../src/app/accel_cal.cpp
+/tmp/minidash_test_attitude

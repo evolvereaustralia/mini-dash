@@ -105,10 +105,15 @@ constexpr int PIN_I2S_DOUT = 15, PIN_I2S_DIN = 43;                   // (GPIO15/
 // ---------------------------------------------------------------------------------------
 constexpr uint8_t GPS_NAV_RATE_HZ = 10;
 constexpr uint16_t IMU_ODR_HZ = 208;
-// Nominal forward axis of the car in the IMU's frame once the board is screwed into the shell
-// (CLAUDE.md section 6: board X along the connector edge, Y along the header edge; the shell
-// mounts the board with Y pointing forward). Pitch and roll of the mount are handled by the
-// attitude filter; only this axis and its sign matter, and the sign is confirmed on the first
-// drive (acceleration must read positive).
-constexpr float IMU_FORWARD_SENSOR[3] = {0.0f, 1.0f, 0.0f};
+// Nominal forward axis of the car in the IMU's frame. Pitch and roll of the mount are handled
+// by the attitude filter; only this axis and its sign matter, and the sign is confirmed on the
+// first drive (acceleration must read positive). It depends on how the board is mounted, so it
+// is a stored setting (serial key A cycles it), not a constant: flat on the bench with the
+// header edge forward it is +Y, the default below; in the finished enclosure (CLAUDE.md
+// section 6) the board stands upright facing the driver and forward is -Z. A setting that
+// leaves this axis within 30 degrees of vertical is refused at run time (attitude.h, review
+// finding 22). Index into IMU_AXES: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z.
+constexpr float IMU_AXES[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+constexpr const char *IMU_AXIS_NAMES[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+constexpr uint8_t IMU_FORWARD_AXIS_DEFAULT = 2;
 constexpr uint16_t LUX_PERIOD_MS = 1000;

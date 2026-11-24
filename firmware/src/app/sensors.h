@@ -37,6 +37,10 @@ void startAccelCal();
 bool accelCalTake(bool *ok, float offset[3], float *radius, float *rmsResidual, int *directions);
 void setAccelCal(const float offset[3], float radius);
 
+// The car's forward axis in the IMU frame, an index into board_config.h IMU_AXES.
+void setForwardAxis(uint8_t axis);
+uint8_t forwardAxis();
+
 // Night mode override: -1 auto (lux), 0 day, 1 night. Brightness 0..100 when not auto.
 void setNightMode(int mode);
 void setBrightness(uint8_t percent);

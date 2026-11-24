@@ -23,6 +23,8 @@ class AccelCal {
     float offset[3] = {0, 0, 0};
     float radius = 1;
     float rmsResidual = 0;  // g, distance of the samples from the fitted sphere
+    float maxResidual = 0;  // g, the worst single direction
+    bool conditioned = true;  // false: the directions did not pin the fit down
     int directions = 0;
   };
 
@@ -37,7 +39,13 @@ class AccelCal {
   float lastSpreadG() const { return lastSpread_; }  // diagnostics: current window spread
   // The samples cover each axis both ways (max minus min over 1.2 g on x, y and z).
   bool coverage() const;
-  // Fit; false with fewer than MIN_DIRS directions or poor coverage. Ends the collection.
+  // Fit; false with fewer than MIN_DIRS directions, poor coverage, an ill-conditioned fit, or
+  // samples that do not lie on a sphere to within MAX_RMS_G (RMS) and MAX_SINGLE_G (worst
+  // direction). A calibration that fails these is not applied: a board moved during a
+  // "still" window, or a sensor that is not a simple offset and scale, would otherwise be
+  // corrected with wrong offsets on every sample from then on (review finding 23). The sensor's
+  // noise after a 0.3 s average is about 4 mg; the one calibration taken on this unit gave 2.9.
+  static constexpr float MAX_RMS_G = 0.010f, MAX_SINGLE_G = 0.020f;
   bool finish(Result &out);
   void cancel() { active_ = false; }
 

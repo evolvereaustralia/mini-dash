@@ -73,6 +73,7 @@ int main() {
   for (int i = 0; i < 3; i++) if (fabsf(cr.offset[i] - accelOffset[i]) > 0.006f) calFail = 1;
 
   Attitude att;
+  TurnGate turn;
   SpeedFusion fus;
   const float dt = 1.0f / 208.0f;
   float t = 0, vTrue = 0, pitchCar = 0, yawCar = 0;
@@ -148,11 +149,12 @@ int main() {
     float oldest = gpsHist[gpsHistIdx];
     bool speedSteady = fabsf(gpsSpeed - oldest) < 0.4f;
     bool plausible = att.accelPlausible(a);
-    bool trust = plausible && wn < 10.0f && speedSteady;
-    bool stationary = gpsSpeed < 0.3f && wn < 3.0f;
+    bool turning = turn.update(gpsSpeed, att.yawRateDps(w), dt);
+    bool trust = plausible && wn < 10.0f && speedSteady && !turning;
+    bool stationary = gpsSpeed < 0.3f && wn < 3.0f;  // GPS evidence, so the bias is learnt too
     (void)an;
     float kp = t < bootKpUntil ? 2.0f : (stationary ? 1.0f : 0.1f);  // standstill: gravity is exact
-    att.update(a, w, dt, trust, kp, stationary);
+    att.update(a, w, dt, trust, kp, stationary, stationary);
     float up[3];
     att.up(up);
     float lon, lat;

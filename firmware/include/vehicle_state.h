@@ -131,6 +131,11 @@ struct Diagnostics {
   // zero), the learnt gyro bias magnitude and the longitudinal residual learnt at standstill.
   float attTiltDeg = 0, attCorrDeg = 0, gyroBiasDps = 0, lonBiasG = 0;
   bool attTrust = false, attStationary = false;
+  bool attTurnHold = false;   // the accelerometer is held off: speed times yaw rate says the car is turning
+  bool attBiasLearn = false;  // gyro bias being learnt (GPS says standstill)
+  bool fwdAxisBad = false;    // the forward-axis setting is near vertical for this mounting: no G figures
+  uint8_t fwdAxis = 2;
+  float centripetalG = 0;
   uint8_t mountRefSaves = 0, mountRefFails = 0;  // mounting references stored, and refused by flash: the Settings label
   float accNorm = 1, gyrNorm = 0, restNorm = 1;  // gate inputs: |a| g, bias-corrected |w| deg/s, learnt |a| at rest
   // Accelerometer offset calibration: 0 idle, 1 collecting, 2 done, 3 failed; directions stored.

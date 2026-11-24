@@ -72,7 +72,9 @@ int g_gpsSpeedIdx = 0;
 uint32_t g_gpsSpeedMs = 0;
 uint32_t g_lastEpoch = 0;
 bool g_haveEpoch = false;
-bool g_attTrust = false, g_attStationary = false;
+bool g_attTrust = false, g_attStationary = false, g_attTurnHold = false, g_attBiasLearn = false, g_fwdAxisBad = false;
+TurnGate g_turn;
+volatile uint8_t g_fwdAxis = IMU_FORWARD_AXIS_DEFAULT;
 float g_accNorm = 1, g_gyrNorm = 0;
 
 // Display path low-pass state (about 5 Hz at 208 Hz).
@@ -246,11 +248,18 @@ void pollImu(uint32_t now) {
       g_mountRefReady = true;  // stored by the loop task; the Settings label follows the stored count
       portEXIT_CRITICAL(&g_resultMux);
       g_att.reset(acc);
+      g_att.seedRestNorm(n);
+      g_turn.reset();
       g_fusion.reset();
     }
     g_calibrateRequest = false;
   }
-  if (!g_att.ready()) g_att.reset(g_calibrated ? g_gRef : acc);
+  if (!g_att.ready()) {
+    // Direction from the stored mounting reference if there is one; the magnitude at rest
+    // always from this sensor, now (the stored reference is a unit vector).
+    g_att.reset(g_calibrated ? g_gRef : acc);
+    g_att.seedRestNorm(sqrtf(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]));
+  }
 
   // Offset calibration: raw samples, collected while the gyro is quiet, until ten directions
   // or 60 s; the fit applies at once and the result waits for main to store it.
@@ -282,15 +291,20 @@ void pollImu(uint32_t now) {
         g_accCalibrated = true;
         for (int i = 0; i < 3; i++) acc[i] = (raw[i] - g_accOff[i]) / g_accRadius;
         g_att.reset(acc);
+        g_att.seedRestNorm(sqrtf(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]));
+        g_turn.reset();
         g_fusion.reset();
         g_accCalState = 2;
-        Serial.printf("accel cal: done, %d directions, offset %+.1f %+.1f %+.1f mg, radius %.4f g, residual %.1f mg\n",
+        Serial.printf("accel cal: done, %d directions, offset %+.1f %+.1f %+.1f mg, radius %.4f g, residual %.1f mg rms, %.1f mg worst\n",
                       g_accelCalResult.directions, g_accOff[0] * 1000, g_accOff[1] * 1000, g_accOff[2] * 1000, g_accRadius,
-                      g_accelCalResult.rmsResidual * 1000);
+                      g_accelCalResult.rmsResidual * 1000, g_accelCalResult.maxResidual * 1000);
       } else {
         g_accCalState = 3;
-        Serial.printf("accel cal: FAILED, %d directions (need %d with each axis seen both ways)\n", g_accelCalResult.directions,
-                      AccelCal::MIN_DIRS);
+        Serial.printf("accel cal: FAILED and not applied: %d directions (need %d with each axis seen both ways)%s, residual %.1f mg rms "
+                      "(limit %.0f), %.1f mg worst (limit %.0f)\n",
+                      g_accelCalResult.directions, AccelCal::MIN_DIRS, g_accelCalResult.conditioned ? "" : ", fit ill-conditioned",
+                      g_accelCalResult.rmsResidual * 1000, AccelCal::MAX_RMS_G * 1000, g_accelCalResult.maxResidual * 1000,
+                      AccelCal::MAX_SINGLE_G * 1000);
       }
       portENTER_CRITICAL(&g_resultMux);
       g_accelCalResultReady = true;
@@ -299,35 +313,53 @@ void pollImu(uint32_t now) {
   }
 
   // When may the accelerometer serve as the gravity reference? Specific force within 3 percent
-  // of 1 g (no linear acceleration, no cornering), gyro rates under 10 deg/s, and the GPS speed
-  // steady over the last second when there is one. Standstill (GPS under 0.3 m/s, or no GPS
-  // and the IMU quiet) trusts gravity fully and learns the gyro bias; the first 3 s after the
-  // filter starts converge fast, the car being at rest when it is switched on.
+  // of its magnitude at rest (no linear acceleration), gyro rates under 10 deg/s, the GPS speed
+  // steady over the last second when there is one, and no turn in progress: speed times yaw
+  // rate is the centripetal acceleration whatever the accelerometer says, and above 0.05 g it
+  // holds the accelerometer off (TurnGate, review finding 20).
+  // "At rest" (gravity trusted fully) is GPS under 0.3 m/s, or with no GPS a quiet IMU. The gyro
+  // bias is learnt only on the GPS evidence: a quiet IMU alone cannot tell a standstill from a
+  // long gentle curve (review finding 21). The first 3 s after the filter starts converge fast,
+  // the car being at rest when it is switched on.
   float an = sqrtf(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
   float bias[3];
   g_att.gyroBias(bias);
   float wn = sqrtf((gyr[0] - bias[0]) * (gyr[0] - bias[0]) + (gyr[1] - bias[1]) * (gyr[1] - bias[1]) +
                    (gyr[2] - bias[2]) * (gyr[2] - bias[2]));
-  bool gpsFresh = g_gpsSpeedMs && now - g_gpsSpeedMs < STALE_GPS_MS;
+  bool gpsFresh = g_gpsSpeedMs && now - g_gpsSpeedMs < STALE_GPS_MS;  // set only by epochs with a valid 3D fix
   bool steady = gpsFresh ? fabsf(g_gpsSpeed - g_gpsSpeedHist[g_gpsSpeedIdx]) < 0.4f : true;
   bool plausible = g_att.accelPlausible(acc);
-  bool trust = plausible && wn < 10.0f && steady;
-  bool stationary = (gpsFresh ? g_gpsSpeed < 0.3f : plausible) && wn < (gpsFresh ? 3.0f : 1.0f);
+  bool turning = gpsFresh ? g_turn.update(g_gpsSpeed, g_att.yawRateDps(gyr), dt) : false;
+  if (!gpsFresh) g_turn.reset();
+  bool trust = plausible && wn < 10.0f && steady && !turning;
+  bool gpsStill = gpsFresh && g_gpsSpeed < 0.3f && wn < 3.0f;
+  bool atRest = gpsFresh ? gpsStill : (plausible && wn < 1.0f);
   g_accNorm = an;
   g_gyrNorm = wn;
   if (g_attStartMs == 0) g_attStartMs = now;
-  float kp = now - g_attStartMs < 3000 ? 2.0f : (stationary ? 1.0f : 0.1f);
-  g_att.update(acc, gyr, dt, trust, kp, stationary);
+  float kp = now - g_attStartMs < 3000 ? 2.0f : (atRest ? 1.0f : 0.1f);
+  g_att.update(acc, gyr, dt, trust, kp, atRest, gpsStill);
   g_attTrust = trust;
-  g_attStationary = stationary;
+  g_attStationary = atRest;
+  g_attTurnHold = turning;
+  g_attBiasLearn = gpsStill;
 
   float up[3];
   g_att.up(up);
   float lon, lat;
-  vehicleFrameG(acc, up, IMU_FORWARD_SENSOR, &lon, &lat);
-  g_latLp += LP_ALPHA * (lat - g_latLp);
-  g_lonLp += LP_ALPHA * (lon - g_lonLp);
-  g_fusion.imuStep(lon, us);
+  // A forward axis that stands near vertical for this mounting gives no G figures at all: the
+  // values go stale and the screen shows dashes, and the speed falls back to GPS alone.
+  bool frameOk = vehicleFrameG(acc, up, IMU_AXES[g_fwdAxis < 6 ? g_fwdAxis : IMU_FORWARD_AXIS_DEFAULT], &lon, &lat);
+  if (frameOk != !g_fwdAxisBad) {
+    g_fwdAxisBad = !frameOk;
+    Serial.printf("imu: forward axis %s %s\n", IMU_AXIS_NAMES[g_fwdAxis < 6 ? g_fwdAxis : 0],
+                  frameOk ? "is usable" : "is within 30 degrees of vertical for this mounting: G figures off until it is changed (serial key A)");
+  }
+  if (frameOk) {
+    g_latLp += LP_ALPHA * (lat - g_latLp);
+    g_lonLp += LP_ALPHA * (lon - g_lonLp);
+    g_fusion.imuStep(lon, us);
+  }
   float yaw = g_att.yawRateDps(gyr);
 
   VsLock lk(5);
@@ -341,7 +373,7 @@ void pollImu(uint32_t now) {
   vs.imu.gy = gyr[1];
   vs.imu.gz = gyr[2];
   vs.imu.samples++;
-  if (!vs.demo) {
+  if (!vs.demo && frameOk) {
     vs.motion.stampMs = now;
     vs.motion.latG = g_latLp;
     vs.motion.lonG = g_lonLp;
@@ -448,6 +480,11 @@ void sensorTask(void *) {
         vs.diag.lonBiasG = g_fusion.lonBiasG();
         vs.diag.attTrust = g_attTrust;
         vs.diag.attStationary = g_attStationary;
+        vs.diag.attTurnHold = g_attTurnHold;
+        vs.diag.attBiasLearn = g_attBiasLearn;
+        vs.diag.fwdAxisBad = g_fwdAxisBad;
+        vs.diag.fwdAxis = g_fwdAxis;
+        vs.diag.centripetalG = g_turn.centripetalG();
         vs.diag.accCalState = g_accCalState;
         vs.diag.accCalDirs = (uint8_t)g_accelCal.directions();
         vs.diag.accCalibrated = g_accCalibrated;
@@ -506,6 +543,11 @@ void setMountingRef(const float ref[3]) {
   g_calibrated = true;
   g_att.reset(g_gRef);
 }
+
+void setForwardAxis(uint8_t axis) {
+  if (axis < 6) g_fwdAxis = axis;
+}
+uint8_t forwardAxis() { return g_fwdAxis; }
 
 void startAccelCal() { g_accelCalRequest = true; }
 bool accelCalTake(bool *ok, float offset[3], float *radius, float *rmsResidual, int *directions) {

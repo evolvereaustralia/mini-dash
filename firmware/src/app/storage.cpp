@@ -351,6 +351,16 @@ uint32_t reserveTripId() {
 
 int listActive(uint32_t *ids, int max) { return g_fsOk ? listActiveIds(ids, max) : 0; }
 
+uint8_t loadForwardAxis(uint8_t fallback) {
+  uint8_t a = g_prefs.getUChar("fwd_axis", fallback);
+  return a < 6 ? a : fallback;
+}
+bool saveForwardAxis(uint8_t axis) {
+  g_writes++;
+  bool ok = axis < 6 && g_prefs.putUChar("fwd_axis", axis) == 1;
+  if (!ok) g_faults++;
+  return ok;
+}
 bool loadObdEnabled() { return g_prefs.getBool("obd_on", true); }
 void saveObdEnabled(bool on) {
   g_writes++;

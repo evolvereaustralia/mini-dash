@@ -52,8 +52,6 @@ Attitude::Attitude() : q_{1, 0, 0, 0}, bias_{0, 0, 0}, ready_(false), lastCorrDe
 void Attitude::reset(const float a[3]) {
   // The shortest rotation taking the measured up (sensor frame) onto world Z.
   float u[3] = {a[0], a[1], a[2]};
-  float n = sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
-  if (n > 0.5f && n < 1.5f) restNorm_ = n;
   normalise3(u);
   float d = u[2];  // dot with (0, 0, 1)
   if (d < -0.9999f) {
@@ -70,6 +68,10 @@ void Attitude::reset(const float a[3]) {
   lastCorrDeg_ = 0;
 }
 
+void Attitude::seedRestNorm(float n) {
+  if (n > 0.5f && n < 1.5f) restNorm_ = n;
+}
+
 void Attitude::up(float out[3]) const {
   // World Z expressed in the sensor frame: the third row of the sensor-to-world matrix.
   const float w = q_[0], x = q_[1], y = q_[2], z = q_[3];
@@ -78,19 +80,22 @@ void Attitude::up(float out[3]) const {
   out[2] = 1.0f - 2.0f * (x * x + y * y);
 }
 
-void Attitude::update(const float a[3], const float w[3], float dt, bool trustAccel, float kp, bool stationary) {
+void Attitude::update(const float a[3], const float w[3], float dt, bool trustAccel, float kp, bool atRest, bool learnBias) {
   if (!ready_) {
     reset(a);
+    seedRestNorm(sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]));
     return;
   }
   if (dt <= 0 || dt > 0.5f) return;
   float rate[3] = {w[0] - bias_[0], w[1] - bias_[1], w[2] - bias_[2]};  // deg/s
-  if (stationary) {
+  if (learnBias) {
     // The true rate is zero: the bias is the low-passed gyro reading. Fast while the estimate
     // is young (the car usually stands for a while after power-on), then slow tracking.
     float k = dt / (stationaryS_ < BIAS_FAST_FOR_S ? BIAS_TAU_FAST_S : BIAS_TAU_S);
     stationaryS_ += dt;
     for (int i = 0; i < 3; i++) bias_[i] += k * (w[i] - bias_[i]);
+  }
+  if (atRest) {
     float n = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
     if (n > 0.5f && n < 1.5f) restNorm_ += (n - restNorm_) * dt / REST_NORM_TAU_S;
   }
@@ -110,7 +115,7 @@ void Attitude::update(const float a[3], const float w[3], float dt, bool trustAc
     lastCorrDeg_ = g * sqrtf(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]) / DEG;
     // In steady motion the persistent part of the error is gyro bias about the horizontal
     // axes (the integral term of a Mahony filter); the bias about up is unobservable here.
-    if (!stationary)
+    if (!learnBias)
       for (int i = 0; i < 3; i++) bias_[i] -= BIAS_KI * c[i] * dt / DEG;
   }
   for (int i = 0; i < 3; i++) {
@@ -144,13 +149,35 @@ float Attitude::tiltDeg() const {
   return acosf(c) / DEG;
 }
 
-void vehicleFrameG(const float a[3], const float up[3], const float forward[3], float *lonG, float *latG) {
+bool TurnGate::update(float speedMps, float yawDps, float dt) {
+  lastG_ = fabsf(speedMps * yawDps * DEG) / 9.80665f;
+  if (lastG_ > HOLD_G) {
+    hold_ = true;
+    belowS_ = 0;
+  } else if (hold_) {
+    if (lastG_ < RELEASE_G) {
+      belowS_ += dt;
+      if (belowS_ >= RELEASE_S) hold_ = false;
+    } else {
+      belowS_ = 0;  // between the two thresholds: stay held, start the wait again
+    }
+  }
+  return hold_;
+}
+
+bool vehicleFrameG(const float a[3], const float up[3], const float forward[3], float *lonG, float *latG) {
   float lin[3] = {a[0] - up[0], a[1] - up[1], a[2] - up[2]};
   float d = forward[0] * up[0] + forward[1] * up[1] + forward[2] * up[2];
   float f[3] = {forward[0] - d * up[0], forward[1] - d * up[1], forward[2] - d * up[2]};
+  if (sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]) < FORWARD_MIN_PROJ) {
+    *lonG = 0;
+    *latG = 0;
+    return false;
+  }
   normalise3(f);
   // right = forward x up (x forward, y left, z up is right-handed; right is -y)
   float r[3] = {f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]};
   *lonG = lin[0] * f[0] + lin[1] * f[1] + lin[2] * f[2];
   *latG = lin[0] * r[0] + lin[1] * r[1] + lin[2] * r[2];
+  return true;
 }

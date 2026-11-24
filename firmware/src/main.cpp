@@ -248,6 +248,10 @@ void handleSerial() {
     } else if (ch == 'P') {  // pair with a dongle now, as the Settings button (only when none is stored)
       Obd::requestPairing();
       Serial.println(Obd::paired() ? "OBD: a dongle is already paired; F forgets it" : "OBD: pairing for 30 s");
+    } else if (ch == 'A') {  // the car's forward axis in the IMU frame: cycles +X -X +Y -Y +Z -Z and stores it
+      uint8_t axis = (Sensors::forwardAxis() + 1) % 6;
+      Sensors::setForwardAxis(axis);
+      Serial.printf("imu: forward axis now %s (%s)\n", IMU_AXIS_NAMES[axis], Storage::saveForwardAxis(axis) ? "stored" : "NOT stored");
     } else if (ch == 'K') {  // KK within 3 s: format the trip partition. The only way it is ever formatted once it holds data.
       static uint32_t firstK = 0;
       if (firstK && millis() - firstK < 3000) {
@@ -336,6 +340,7 @@ void setup() {
   }
   if (st.accCalibrated) Sensors::setAccelCal(st.accOffset, st.accRadius);
   if (st.calibrated) Sensors::setMountingRef(st.gRef);
+  Sensors::setForwardAxis(Storage::loadForwardAxis(IMU_FORWARD_AXIS_DEFAULT));
   // Checkpoints left by power cuts are archived here, before any task that could write exists.
   Persist::begin(&g_engine);
 
@@ -385,7 +390,7 @@ void loop() {
                   vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz, vs.disp.lux,
                   vs.disp.night ? "night" : "day", vs.disp.backlightPct,
                   (unsigned long)LvglPort::frameCount(), (unsigned long)fl, (unsigned long)wt, (unsigned long)to,
-                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), Obd::stateName(vs.diag.obdState), vs.diag.obdHz, vs.car.socPct, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.attTrust ? "trust" : "hold", vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)Storage::faultCount(), Persist::pendingRecovery(), Storage::needsOwner() ? " STORAGE NEEDS KK" : "", (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
+                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), Obd::stateName(vs.diag.obdState), vs.diag.obdHz, vs.car.socPct, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.fwdAxisBad ? "FORWARD AXIS NEAR VERTICAL" : (vs.diag.attTrust ? "trust" : (vs.diag.attTurnHold ? "hold (turn)" : "hold")), vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)Storage::faultCount(), Persist::pendingRecovery(), Storage::needsOwner() ? " STORAGE NEEDS KK" : "", (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
                   (unsigned long)I2cBus::longestHoldMs(), I2cBus::longestHolder());
   }
   delay(10);
