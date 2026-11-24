@@ -26,6 +26,8 @@ bool luxOk();
 void calibrateMounting();
 // The stored mounting reference (unit gravity vector in the sensor frame); false if never taken.
 bool mountingRef(float out[3]);
+// True once after the sensor task has taken a new reference, so the caller can store it.
+bool mountRefTake(float out[3]);
 void setMountingRef(const float ref[3]);
 
 // Accelerometer offset calibration (docs/calibration.md): start collecting while the user

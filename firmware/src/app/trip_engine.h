@@ -51,9 +51,26 @@ class TripEngine {
   void setIsolated(bool isolated) { isolated_ = isolated; }
   void setEventSink(EventSink sink) { sink_ = sink; }
 
-  const RecordSet &lifetime() const { return all_; }
-  bool lifetimeDirty() { bool d = lifetimeDirty_; lifetimeDirty_ = false; return d; }
+  // Everything below is called with the state lock held: the engine is updated from the sensor
+  // or demo task and read from the loop task, and none of these may see it half-changed
+  // (review finding 07).
+  bool takeLifetimeIfDirty(RecordSet &out);  // a copy to write, and the dirty mark cleared with it
+  void markLifetimeDirty() { lifetimeDirty_ = true; }  // a write failed: try again
   uint32_t tripId() const { return tripId_; }
+  uint32_t startUtc() const { return startUtc_; }
+  uint32_t startMs() const { return startMs_; }
+  // The clock arrived after the trip began: date the trip without restarting it (finding 02).
+  void setStartUtc(uint32_t utc) { startUtc_ = utc; }
+  // Today's set rebuilt from stored trips (a late clock, or a new day), with this session's
+  // records folded back in.
+  void rebaseToday(const RecordSet &fromFiles);
+  bool eligible() const { return eligible_; }
+  bool takeEligibleEvent() { bool e = eligibleEvent_; eligibleEvent_ = false; return e; }  // once, when 50 m is reached
+  // Capture builds: runs are reported to the log and never become records.
+  typedef void (*CandidateLog)(int rec, float value, float aux, uint32_t nowMs);
+  void setCaptureOnly(bool on, CandidateLog log) { captureOnly_ = on; candidateLog_ = log; }
+  // dateStamp: the target is the lifetime set, whose records carry a date ("24 Oct") not a time.
+  static bool merge(RecordSet &into, const RecordSet &from, bool addRuns, bool dateStamp = false);
 
   // Fill a summary of the session for the checkpoint or the trip file.
   void summary(Storage::TripSummary &out, uint32_t nowMs, bool demo) const;
@@ -99,6 +116,10 @@ class TripEngine {
   RecordSet session_, today_, all_, lastTrip_;
   bool isolated_ = false;
   bool lifetimeDirty_ = false;
+  bool eligible_ = false, eligibleEvent_ = false;
+  bool captureOnly_ = false;
+  CandidateLog candidateLog_ = nullptr;
+  void promote();
   uint32_t tripId_ = 0, startUtc_ = 0, startMs_ = 0;
   uint32_t lastMs_ = 0;
 

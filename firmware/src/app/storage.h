@@ -13,6 +13,7 @@
 namespace Storage {
 
 constexpr int MAX_TRIPS = 60;
+constexpr int MAX_ACTIVE = 4;  // checkpoints that may wait in /active: the running trip and unarchived ones
 constexpr uint32_t CHECKPOINT_MS = 30000;
 
 struct Settings {
@@ -53,20 +54,33 @@ struct TraceSample {
 };
 constexpr size_t TRACE_MAX = 120;  // 12 s
 
-bool begin();  // mounts; returns false if the file system is unusable (NVS still works)
+// Mounts. A partition that has never held a littlefs is formatted once; one that has and fails
+// to mount is left alone, storage stays off for the boot, and needsOwner() is true.
+bool begin();
+bool needsOwner();
+bool formatNow();       // the deliberate format (serial KK): every trip and trace is erased
+uint32_t faultCount();  // writes that failed or were refused since boot
+// Bench self-test (serial W): one block written through the same safe path as every trip file,
+// read back and removed. It never touches /trips. removeTestTrips clears the test trips older
+// firmware left in the history (ids from 900000 up); those ids are ignored when numbering trips.
+bool selfTest();
+int removeTestTrips();
 uint32_t writeCount();  // flash writes (files and NVS) since boot, for the diagnostics line
 bool fsOk();
 size_t fsUsedBytes();
 size_t fsTotalBytes();
 
 void loadSettings(Settings &s);
-void saveSettings(const Settings &s);
+bool saveSettings(const Settings &s);  // true only if NVS accepted it
 
 void loadLifetime(RecordSet &all);
-void saveLifetime(const RecordSet &all);
+bool saveLifetime(const RecordSet &all);
 void clearLifetime();
 
-uint32_t nextTripId();  // monotonic, persisted in NVS
+// A new trip number, stored before it is used and always above every trip and checkpoint on
+// the disk, so a failed write can never hand out a number that already has files.
+uint32_t reserveTripId();
+int listActive(uint32_t *ids, int max);  // checkpoints waiting in /active, ascending
 
 // OBD: on/off and the paired dongle (address as text, BLE address type). Separate keys, not
 // part of the settings blob, so pairing never touches the calibration.
@@ -92,11 +106,15 @@ bool saveTrip(const TripSummary &t);  // rotates beyond MAX_TRIPS (oldest delete
 void deleteEvents(uint32_t tripId);   // for a trip that is discarded rather than saved
 int pruneOrphanEvents();              // at boot: remove event files whose trip has no trip file (demo trips, power cuts)
 
-// Active trip checkpoint (every CHECKPOINT_MS). At boot, a checkpoint found on disk is the
-// previous trip ended by power loss: finalise it with closeActive().
+// The running trip's checkpoint (every CHECKPOINT_MS), one file per trip. A checkpoint found at
+// boot is a trip ended by power loss: it is archived and only then removed; if archiving
+// fails it stays for the next boot.
 bool saveActive(const TripSummary &t);
-bool loadActive(TripSummary &out);
-void clearActive();
+bool loadActive(uint32_t id, TripSummary &out);
+void clearActive(uint32_t id);
+void quarantineActive(uint32_t id);  // unreadable: set aside, not retried, not destroyed
+bool loadLegacyActive(TripSummary &out);  // the single /active.trp of builds before 24 Nov 2026
+void clearLegacyActive();
 
 bool saveEvent(uint32_t tripId, int rec, const TraceSample *samples, size_t n);
 bool loadEvent(uint32_t tripId, int rec, TraceSample *samples, size_t max, size_t *n);

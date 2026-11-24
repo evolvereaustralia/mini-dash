@@ -131,6 +131,7 @@ struct Diagnostics {
   // zero), the learnt gyro bias magnitude and the longitudinal residual learnt at standstill.
   float attTiltDeg = 0, attCorrDeg = 0, gyroBiasDps = 0, lonBiasG = 0;
   bool attTrust = false, attStationary = false;
+  uint8_t mountRefSaves = 0, mountRefFails = 0;  // mounting references stored, and refused by flash: the Settings label
   float accNorm = 1, gyrNorm = 0, restNorm = 1;  // gate inputs: |a| g, bias-corrected |w| deg/s, learnt |a| at rest
   // Accelerometer offset calibration: 0 idle, 1 collecting, 2 done, 3 failed; directions stored.
   uint8_t accCalState = 0, accCalDirs = 0;
@@ -146,6 +147,9 @@ struct StoreStats {
   uint16_t allTrips = 0;
   float allKm = 0;
   uint32_t usedKb = 0, totalKb = 0;
+  uint16_t faults = 0;          // writes that failed or were refused this boot
+  uint8_t pendingRecovery = 0;  // trips from earlier boots still waiting to be archived
+  bool needsOwner = false;      // the file system has data but did not mount; nothing was erased
 };
 
 struct VehicleState {

@@ -3,20 +3,29 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <Preferences.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "esp_partition.h"
 
 #include "clock.h"
 
 namespace {
 constexpr const char *NVS_NS = "minidash";
 constexpr const char *FS_LABEL = "ffat";  // the 9 MB data partition of app3M_fat9M_16MB
+constexpr const char *FS_MOUNT = "/lfs";  // where LittleFS is mounted in the VFS, for the POSIX calls below
 constexpr uint32_t TRIP_MAGIC = 0x54524950;  // "TRIP"
+constexpr uint32_t TEST_ID_BASE = 900000;  // trips written by the old self-test; never part of the sequence
 constexpr uint16_t TRIP_VERSION = 2;  // 2: the braking record is 60-0 (was 100-0 in version 1)
 constexpr uint32_t EVENT_MAGIC = 0x45564E54;  // "EVNT"
 
 Preferences g_prefs;
-bool g_fsOk = false;
-uint32_t g_writes = 0;
+bool g_fsOk = false, g_fsNeedsOwner = false;
+uint32_t g_writes = 0, g_faults = 0;
 
 struct TripFile {
   uint32_t magic;
@@ -25,24 +34,69 @@ struct TripFile {
   Storage::TripSummary body;
 };
 
+// A durable replacement of one file (review finding 03). The LittleFS port in this build syncs a
+// file the moment it is opened for writing, so opening the target itself commits an EMPTY file
+// before a byte is written: a power cut there used to lose the last good copy. Instead the new
+// content goes to a second file beside the target, with every result checked; it is read back
+// and compared; only then is it renamed over the target, which littlefs does atomically. A cut
+// at any point leaves either the old complete file or the new complete file. POSIX calls are
+// used because Arduino's File::close() and flush() throw the results away.
 bool writeBlock(const char *path, const void *data, size_t n) {
-  // LittleFS updates a file atomically on close (copy on write), so a power cut leaves the
-  // old or the new content. No temporary file and rename: each extra step costs flash erases,
-  // and every erase stalls the panel refill (see main.cpp, deferred writes).
   g_writes++;
-  File f = LittleFS.open(path, "w");
-  if (!f) return false;
-  size_t w = f.write(static_cast<const uint8_t *>(data), n);
-  f.close();
-  return w == n;
+  char full[64], tmp[72];
+  snprintf(full, sizeof(full), "%s%s", FS_MOUNT, path);
+  snprintf(tmp, sizeof(tmp), "%s.tmp", full);
+  bool ok = false;
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd >= 0) {
+    const uint8_t *b = static_cast<const uint8_t *>(data);
+    size_t done = 0;
+    while (done < n) {
+      ssize_t w = write(fd, b + done, n - done);
+      if (w <= 0) break;
+      done += (size_t)w;
+    }
+    bool synced = done == n && fsync(fd) == 0;
+    bool closed = close(fd) == 0;
+    ok = synced && closed;
+  }
+  if (ok) {  // read back and compare before the old copy is given up
+    ok = false;
+    int rd = open(tmp, O_RDONLY);
+    if (rd >= 0) {
+      const uint8_t *b = static_cast<const uint8_t *>(data);
+      uint8_t chunk[128];
+      size_t done = 0;
+      bool same = true;
+      while (same && done < n) {
+        size_t want = n - done < sizeof(chunk) ? n - done : sizeof(chunk);
+        ssize_t r = read(rd, chunk, want);
+        if (r != (ssize_t)want || memcmp(chunk, b + done, want) != 0) same = false;
+        done += want;
+      }
+      uint8_t extra;
+      if (same && read(rd, &extra, 1) != 0) same = false;  // nothing may follow
+      close(rd);
+      ok = same;
+    }
+  }
+  if (ok) ok = rename(tmp, full) == 0;
+  if (!ok) {
+    g_faults++;
+    unlink(tmp);
+    Serial.printf("storage: write of %s FAILED (errno %d); the previous copy, if any, is untouched\n", path, errno);
+  }
+  return ok;
 }
 
 bool readTrip(const char *path, Storage::TripSummary &out) {
   File f = LittleFS.open(path, "r");
   if (!f) return false;
   TripFile tf;
+  size_t total = f.size();
   size_t r = f.read(reinterpret_cast<uint8_t *>(&tf), sizeof(tf));
   f.close();
+  if (total != sizeof(tf)) return false;  // a short file, or one with something after the record
   if (r != sizeof(tf) || tf.magic != TRIP_MAGIC || (tf.version != TRIP_VERSION && tf.version != 1) || tf.size != sizeof(Storage::TripSummary)) return false;
   out = tf.body;
   if (tf.version == 1) out.records.r[REC_60_0] = Record();  // a 100-0 figure: not comparable
@@ -81,7 +135,36 @@ int listTrips(uint32_t *ids, int max) {
   return n;
 }
 
+// Checkpoint ids in /active, ascending.
+int listActiveIds(uint32_t *ids, int max) {
+  int n = 0;
+  File dir = LittleFS.open("/active");
+  if (!dir || !dir.isDirectory()) return 0;
+  File e;
+  while ((e = dir.openNextFile())) {
+    const char *name = e.name();
+    const char *base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    uint32_t id = strtoul(base, nullptr, 10);
+    const char *dot = strrchr(base, '.');
+    if (id && dot && strcmp(dot, ".trp") == 0 && n < max) ids[n++] = id;
+    e.close();
+  }
+  dir.close();
+  for (int i = 1; i < n; i++) {
+    uint32_t v = ids[i];
+    int j = i - 1;
+    while (j >= 0 && ids[j] > v) {
+      ids[j + 1] = ids[j];
+      j--;
+    }
+    ids[j + 1] = v;
+  }
+  return n;
+}
+
 void tripPath(char *buf, size_t n, uint32_t id) { snprintf(buf, n, "/trips/%lu.trp", (unsigned long)id); }
+void activePath(char *buf, size_t n, uint32_t id) { snprintf(buf, n, "/active/%lu.trp", (unsigned long)id); }
 void eventPath(char *buf, size_t n, uint32_t id, int rec) { snprintf(buf, n, "/events/%lu-%d.evt", (unsigned long)id, rec); }
 
 void deleteTripAndEvents(uint32_t id) {
@@ -97,20 +180,80 @@ void deleteTripAndEvents(uint32_t id) {
 
 namespace Storage {
 
+namespace {
+// Does the partition already hold a littlefs? Its superblock carries the ASCII tag "littlefs" in
+// one of the first two blocks. Used to tell a partition that has never been set up from one
+// that has data and merely failed to mount.
+bool partitionHasLittlefs() {
+  const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, FS_LABEL);
+  if (!part) return false;
+  static uint8_t block[512];
+  for (uint32_t off : {0u, 4096u}) {
+    if (esp_partition_read(part, off, block, sizeof(block)) != ESP_OK) continue;
+    for (size_t k = 0; k + 8 <= sizeof(block); k++)
+      if (memcmp(block + k, "littlefs", 8) == 0) return true;
+  }
+  return false;
+}
+
+void removeLeftovers(const char *dirPath) {  // second files left by a cut during a write
+  File dir = LittleFS.open(dirPath);
+  if (!dir || !dir.isDirectory()) return;
+  char victims[8][48];
+  int v = 0;
+  File e;
+  while (v < 8 && (e = dir.openNextFile())) {
+    const char *name = e.name();
+    const char *base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    if (strstr(base, ".tmp")) snprintf(victims[v++], sizeof(victims[0]), "%s/%s", dirPath, base);
+    e.close();
+  }
+  dir.close();
+  for (int i = 0; i < v; i++) LittleFS.remove(victims[i]);
+}
+}  // namespace
+
 bool begin() {
   g_prefs.begin(NVS_NS, false);
-  g_fsOk = LittleFS.begin(true, "/lfs", 8, FS_LABEL);
+  // A mount failure must never format a partition that has trips on it (review finding 05):
+  // format only when no littlefs has ever been written there. Otherwise storage stays off for
+  // this boot, nothing is erased, and formatting takes a deliberate serial command.
+  g_fsOk = LittleFS.begin(false, FS_MOUNT, 8, FS_LABEL);
+  if (!g_fsOk) {
+    if (!partitionHasLittlefs()) {
+      Serial.println("storage: the data partition has never been set up, formatting it once");
+      g_fsOk = LittleFS.begin(true, FS_MOUNT, 8, FS_LABEL);
+    } else {
+      g_fsNeedsOwner = true;
+      g_faults++;
+      Serial.println("storage: LittleFS has data but did NOT mount. Nothing was erased. Trips and traces are off this boot; "
+                     "if this repeats, the serial command KK formats the partition (all trips lost).");
+    }
+  }
   if (g_fsOk) {
-    if (!LittleFS.exists("/trips")) LittleFS.mkdir("/trips");
-    if (!LittleFS.exists("/events")) LittleFS.mkdir("/events");
+    for (const char *d : {"/trips", "/events", "/active"})
+      if (!LittleFS.exists(d)) LittleFS.mkdir(d);
+    for (const char *d : {"/trips", "/events", "/active", "/"}) removeLeftovers(d);
     Serial.printf("storage: LittleFS on '%s', %u KB used of %u KB, %d trips\n", FS_LABEL,
                   (unsigned)(LittleFS.usedBytes() / 1024), (unsigned)(LittleFS.totalBytes() / 1024), tripCount());
-  } else {
-    Serial.println("storage: LittleFS mount FAILED, trips and events will not persist");
   }
   return g_fsOk;
 }
 
+bool formatNow() {
+  LittleFS.end();  // the label is kept from begin(), so format() addresses the same partition whether or not it mounted
+  g_fsOk = LittleFS.format() && LittleFS.begin(false, FS_MOUNT, 8, FS_LABEL);
+  if (g_fsOk) {
+    for (const char *d : {"/trips", "/events", "/active"}) LittleFS.mkdir(d);
+    g_fsNeedsOwner = false;
+  }
+  Serial.printf("storage: format %s\n", g_fsOk ? "done, the partition is empty" : "FAILED");
+  return g_fsOk;
+}
+
+bool needsOwner() { return g_fsNeedsOwner; }
+uint32_t faultCount() { return g_faults; }
 bool fsOk() { return g_fsOk; }
 uint32_t writeCount() { return g_writes; }
 size_t fsUsedBytes() { return g_fsOk ? LittleFS.usedBytes() : 0; }
@@ -123,10 +266,11 @@ void loadSettings(Settings &s) {
   if (n != sizeof(s)) s = d;
 }
 
-void saveSettings(const Settings &s) {
+bool saveSettings(const Settings &s) {
   g_writes++;
-  g_prefs.putBytes("set", &s, sizeof(s));
-  g_prefs.putUChar("set_v", s.version);
+  bool ok = g_prefs.putBytes("set", &s, sizeof(s)) == sizeof(s) && g_prefs.putUChar("set_v", s.version) == 1;
+  if (!ok) g_faults++;
+  return ok;
 }
 
 void loadLifetime(RecordSet &all) {
@@ -146,10 +290,11 @@ void loadLifetime(RecordSet &all) {
   if (!migrated) g_prefs.putBool("brk60", true);
 }
 
-void saveLifetime(const RecordSet &all) {
+bool saveLifetime(const RecordSet &all) {
   g_writes++;
-  g_prefs.putBytes("life", &all, sizeof(all));
-  g_prefs.putUChar("life_v", 1);
+  bool ok = g_prefs.putBytes("life", &all, sizeof(all)) == sizeof(all) && g_prefs.putUChar("life_v", 1) == 1;
+  if (!ok) g_faults++;
+  return ok;
 }
 
 void clearLifetime() {
@@ -157,11 +302,54 @@ void clearLifetime() {
   g_prefs.remove("life_v");
 }
 
-uint32_t nextTripId() {
-  uint32_t id = g_prefs.getULong("trip_id", 0) + 1;
-  g_prefs.putULong("trip_id", id);
+bool selfTest() {
+  if (!g_fsOk) return false;
+  static uint8_t block[1200];
+  for (size_t i = 0; i < sizeof(block); i++) block[i] = (uint8_t)(i * 31 + 7);
+  bool ok = writeBlock("/selftest.bin", block, sizeof(block));  // written, synced, read back, renamed
+  File f = LittleFS.open("/selftest.bin", "r");
+  bool sized = f && f.size() == sizeof(block);
+  if (f) f.close();
+  LittleFS.remove("/selftest.bin");
+  return ok && sized;
+}
+int removeTestTrips() {
+  if (!g_fsOk) return 0;
+  uint32_t ids[MAX_TRIPS + 4];
+  int n = listTrips(ids, MAX_TRIPS + 4), removed = 0;
+  for (int i = 0; i < n; i++)
+    if (ids[i] >= TEST_ID_BASE) {
+      deleteTripAndEvents(ids[i]);
+      removed++;
+    }
+  return removed;
+}
+
+uint32_t reserveTripId() {
+  uint32_t id = g_prefs.getULong("trip_id", 0);
+  if (g_fsOk) {  // the counter is checked against what is actually on the disk
+    uint32_t ids[MAX_TRIPS + 4];
+    int n = listTrips(ids, MAX_TRIPS + 4);
+    for (int i = 0; i < n; i++)  // newest first; test trips from older firmware do not count
+      if (ids[i] < TEST_ID_BASE) {
+        if (ids[i] > id) id = ids[i];
+        break;
+      }
+    uint32_t act[MAX_ACTIVE];
+    int a = listActive(act, MAX_ACTIVE);
+    for (int i = 0; i < a; i++)
+      if (act[i] > id && act[i] < TEST_ID_BASE) id = act[i];
+  }
+  id++;
+  g_writes++;
+  if (g_prefs.putULong("trip_id", id) != sizeof(uint32_t) || g_prefs.getULong("trip_id", 0) != id) {
+    g_faults++;
+    Serial.println("storage: the trip counter could not be stored; this trip's number is taken from the files on disk");
+  }
   return id;
 }
+
+int listActive(uint32_t *ids, int max) { return g_fsOk ? listActiveIds(ids, max) : 0; }
 
 bool loadObdEnabled() { return g_prefs.getBool("obd_on", true); }
 void saveObdEnabled(bool on) {
@@ -248,8 +436,9 @@ void deleteEvents(uint32_t tripId) {
 // per pass; the directory is not iterated while files are removed from it.
 int pruneOrphanEvents() {
   if (!g_fsOk) return 0;
-  uint32_t ids[MAX_TRIPS + 4];
+  uint32_t ids[MAX_TRIPS + 4 + MAX_ACTIVE];
   int n = listTrips(ids, MAX_TRIPS + 4);
+  n += listActiveIds(ids + n, MAX_ACTIVE);  // a trip not yet archived keeps its traces
   int removed = 0;
   for (int pass = 0; pass < 16; pass++) {
     char victims[32][40];
@@ -275,29 +464,62 @@ int pruneOrphanEvents() {
   return removed;
 }
 
-bool saveActive(const TripSummary &t) { return g_fsOk && writeTrip("/active.trp", t); }
-bool loadActive(TripSummary &out) { return g_fsOk && LittleFS.exists("/active.trp") && readTrip("/active.trp", out); }
-void clearActive() {
+// The running trip's checkpoint, one file per trip in /active (review finding 04): a trip that
+// could not be archived keeps its checkpoint for the next boot, and the next trip cannot
+// overwrite it. The single file /active.trp used until 24 Nov 2026 is still recognised.
+bool saveActive(const TripSummary &t) {
+  if (!g_fsOk) return false;
+  char path[40];
+  activePath(path, sizeof(path), t.id);
+  return writeTrip(path, t);
+}
+bool loadActive(uint32_t id, TripSummary &out) {
+  if (!g_fsOk) return false;
+  char path[40];
+  activePath(path, sizeof(path), id);
+  return LittleFS.exists(path) && readTrip(path, out);
+}
+void clearActive(uint32_t id) {
+  if (!g_fsOk) return;
+  char path[40];
+  activePath(path, sizeof(path), id);
+  LittleFS.remove(path);
+}
+// Sets a checkpoint aside when it cannot be read, so it is neither retried at every boot nor
+// silently destroyed. At most three are kept.
+void quarantineActive(uint32_t id) {
+  if (!g_fsOk) return;
+  char from[40], to[40];
+  activePath(from, sizeof(from), id);
+  snprintf(to, sizeof(to), "/active/%lu.bad", (unsigned long)id);
+  LittleFS.rename(from, to);
+}
+bool loadLegacyActive(TripSummary &out) { return g_fsOk && LittleFS.exists("/active.trp") && readTrip("/active.trp", out); }
+void clearLegacyActive() {
   if (g_fsOk) LittleFS.remove("/active.trp");
 }
 
+namespace {
+struct EventFile {
+  uint32_t magic;
+  uint32_t count;
+  TraceSample samples[TRACE_MAX];
+};
+}  // namespace
+
 bool saveEvent(uint32_t tripId, int rec, const TraceSample *samples, size_t n) {
-  if (!g_fsOk || n == 0) return false;
+  if (!g_fsOk || n == 0 || n > TRACE_MAX) return false;
   char path[40];
   eventPath(path, sizeof(path), tripId, rec);
-  struct {
-    uint32_t magic;
-    uint32_t count;
-  } hdr = {EVENT_MAGIC, (uint32_t)n};
-  g_writes++;
-  File f = LittleFS.open(path, "w");
-  if (!f) return false;
-  bool ok = f.write(reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)) == sizeof(hdr) &&
-            f.write(reinterpret_cast<const uint8_t *>(samples), n * sizeof(TraceSample)) == n * sizeof(TraceSample);
-  f.close();
-  return ok;
+  static EventFile ef;  // the loop task is the only writer
+  ef.magic = EVENT_MAGIC;
+  ef.count = (uint32_t)n;
+  memcpy(ef.samples, samples, n * sizeof(TraceSample));
+  return writeBlock(path, &ef, 2 * sizeof(uint32_t) + n * sizeof(TraceSample));
 }
 
+// A trace is either the whole file as written or nothing: a count beyond capacity, a file
+// shorter or longer than its count says, or a short read all mean "no trace".
 bool loadEvent(uint32_t tripId, int rec, TraceSample *samples, size_t max, size_t *n) {
   *n = 0;
   if (!g_fsOk) return false;
@@ -309,15 +531,13 @@ bool loadEvent(uint32_t tripId, int rec, TraceSample *samples, size_t max, size_
     uint32_t magic;
     uint32_t count;
   } hdr;
-  if (f.read(reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)) != sizeof(hdr) || hdr.magic != EVENT_MAGIC) {
-    f.close();
-    return false;
-  }
-  size_t count = hdr.count < max ? hdr.count : max;
-  size_t r = f.read(reinterpret_cast<uint8_t *>(samples), count * sizeof(TraceSample));
+  size_t total = f.size();
+  bool ok = f.read(reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)) == sizeof(hdr) && hdr.magic == EVENT_MAGIC && hdr.count >= 1 &&
+            hdr.count <= TRACE_MAX && hdr.count <= max && total == sizeof(hdr) + hdr.count * sizeof(TraceSample);
+  if (ok) ok = f.read(reinterpret_cast<uint8_t *>(samples), hdr.count * sizeof(TraceSample)) == hdr.count * sizeof(TraceSample);
   f.close();
-  *n = r / sizeof(TraceSample);
-  return *n > 0;
+  if (ok) *n = hdr.count;
+  return ok;
 }
 
 bool sameLocalDay(uint32_t utcA, uint32_t utcB) {
@@ -344,12 +564,13 @@ void aggregateDay(uint32_t dayUtc, RecordSet &best, DayStats &stats, uint32_t ex
       if (!cand.valid) continue;
       bool lower = r <= REC_60_0;
       Record &cur = best.r[r];
+      uint32_t runs = (uint32_t)(cur.valid ? cur.runs : 0) + cand.runs;
       if (!cur.valid || (lower ? cand.value < cur.value : cand.value > cur.value)) {
         cur = cand;
         cur.beatLifetime = false;
         cur.hasPrevious = false;
       }
-      cur.runs += cand.runs;
+      cur.runs = runs > 65535 ? 65535 : (uint16_t)runs;
     }
   }
 }

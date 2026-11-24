@@ -12,6 +12,16 @@ uint32_t g_baseUtc = 0;    // UTC at g_baseMs
 uint32_t g_baseMs = 0;
 bool g_valid = false;
 bool g_setFromGps = false;
+// The base pair is written by the sensor task (GPS time) and read by every other task.
+portMUX_TYPE g_clockMux = portMUX_INITIALIZER_UNLOCKED;
+void setBase(uint32_t utc) {
+  uint32_t ms = millis();
+  portENTER_CRITICAL(&g_clockMux);
+  g_baseUtc = utc;
+  g_baseMs = ms;
+  g_valid = true;
+  portEXIT_CRITICAL(&g_clockMux);
+}
 
 uint8_t bcd2bin(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
 uint8_t bin2bcd(uint8_t v) { return ((v / 10) << 4) | (v % 10); }
@@ -134,17 +144,20 @@ void formatDayMonth(uint32_t utc, char *out, size_t n) {
 bool begin() {
   uint32_t utc;
   if (rtcRead(&utc) && utc > 1700000000UL) {  // after Nov 2023: a set clock, not the 2000-01-01 default
-    g_baseUtc = utc;
-    g_baseMs = millis();
-    g_valid = true;
+    setBase(utc);
     return true;
   }
   return false;
 }
 
 uint32_t nowUtc() {
-  if (!g_valid) return 0;
-  return g_baseUtc + (millis() - g_baseMs) / 1000UL;
+  uint32_t now = millis();
+  portENTER_CRITICAL(&g_clockMux);
+  bool valid = g_valid;
+  uint32_t utc = g_baseUtc, ms = g_baseMs;
+  portEXIT_CRITICAL(&g_clockMux);
+  if (!valid) return 0;
+  return utc + (uint32_t)(now - ms) / 1000UL;
 }
 
 bool valid() { return g_valid; }
@@ -153,9 +166,7 @@ bool setFromGpsDone() { return g_setFromGps; }
 void setFromGps(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second) {
   if (year < 2024 || month < 1 || month > 12 || day < 1 || day > 31) return;
   uint32_t utc = daysFromCivil(year, month, day) * 86400UL + hour * 3600UL + minute * 60UL + second;
-  g_baseUtc = utc;
-  g_baseMs = millis();
-  g_valid = true;
+  setBase(utc);
   if (!g_setFromGps) {
     g_setFromGps = rtcWrite(utc);
     if (g_setFromGps) Serial.printf("clock: RTC set from GPS, %lu\n", (unsigned long)utc);

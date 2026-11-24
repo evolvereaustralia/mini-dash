@@ -4,11 +4,12 @@
 //
 // Serial keys: d = demo on/off, 1..9 and 0 = backlight 10..100 %, p = screenshot (base64
 // RGB565, decode with tools/screenshot.py), n = next tab, D R Y E B = a page, x = settings, i = I2C scan, r = reboot.
+// Storage: W = self-test of the safe write path, KK = format the trip partition (the only way it is
+// ever formatted once it holds data), X = remove old test trips. The rest are in firmware/README.md.
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <string.h>
-#include <LittleFS.h>
 
 #include "esp_heap_caps.h"
 
@@ -16,6 +17,7 @@
 #include "app/demo_source.h"
 #include "app/lvgl_port.h"
 #include "app/obd_client.h"
+#include "app/persist.h"
 #include "app/sensors.h"
 #include "app/storage.h"
 #include "app/touch_gt911.h"
@@ -33,190 +35,18 @@ constexpr const char *VERSION = "0.3b";
 TripEngine g_engine;
 esp_lcd_panel_handle_t g_panel = nullptr;
 bool g_touchOk = false;
-Storage::Settings g_settings;
-uint32_t g_lastCheckpointMs = 0;
-uint32_t g_lastCheckpointWriteMs = 0;
-uint32_t g_tripStartUtc = 0;
-
-// Storage statistics into the state (after boot and whenever a trip is saved).
-void refreshStoreStats() {
-  Storage::DayStats today, all;
-  RecordSet todayBest;
-  uint32_t now = Clock::nowUtc();
-  Storage::aggregateDay(now, todayBest, today, g_engine.tripId());
-  Storage::aggregateAll(all);
-  VsLock lk;
-  if (!lk.ok()) return;
-  StoreStats &st = Vs::raw().store;
-  st.fsOk = Storage::fsOk();
-  st.storedTrips = Storage::tripCount();
-  st.todayTrips = today.trips;
-  st.todayKm = today.km;
-  st.allTrips = all.trips;
-  st.allKm = all.km;
-  st.usedKb = Storage::fsUsedBytes() / 1024;
-  st.totalKb = Storage::fsTotalBytes() / 1024;
-}
-
-void flushDeferredWrites(bool force);
-
-// Close the running trip into a trip file (unless it is a demo or went nowhere) and start a
-// new one. Used by "Reset this trip" and at boot for a checkpoint left by a power cut.
-void finishTrip(bool fromCheckpoint, const Storage::TripSummary *checkpoint) {
-  Storage::TripSummary t;
-  if (fromCheckpoint) {
-    t = *checkpoint;
-  } else {
-    g_engine.summary(t, millis(), Demo::enabled());
-  }
-  t.closed = true;
-  flushDeferredWrites(true);  // the trip's last events go with it
-  if (!t.demo && t.trip.distanceKm > 0.05f) {
-    if (Storage::saveTrip(t)) {
-      g_engine.setLastTrip(t.records);
-      Serial.printf("storage: trip %lu saved, %.1f km\n", (unsigned long)t.id, t.trip.distanceKm);
-    }
-  } else {
-    Storage::deleteEvents(t.id);  // a demo or empty trip leaves nothing behind
-  }
-  Storage::clearActive();
-}
-
-void startNewTrip() {
-  uint32_t id = Storage::nextTripId();
-  g_tripStartUtc = Clock::nowUtc();
-  RecordSet todayBest;
-  Storage::DayStats ds;
-  Storage::aggregateDay(g_tripStartUtc, todayBest, ds, id);
-  {
-    VsLock lk;
-    if (lk.ok()) {
-      g_engine.startTrip(id, millis(), g_tripStartUtc);
-      g_engine.setToday(todayBest);
-      g_engine.setIsolated(Demo::enabled());
-      g_engine.publish(Vs::raw());
-    }
-  }
-  g_lastCheckpointMs = millis();
-  g_lastCheckpointWriteMs = millis();  // the overdue hatch counts from the trip start
-  refreshStoreStats();
-}
-
-void saveSettings(const Ui::UiSettings &u) {
-  g_settings.mph = u.mph;
-  g_settings.nightMode = u.nightMode;
-  g_settings.demo = u.demo;
-  g_settings.bestField = u.bestField;
-  g_settings.brightness = 100;
-  g_settings.calibrated = Sensors::mountingRef(g_settings.gRef);
-  Storage::saveSettings(g_settings);
-}
-
-// The accelerometer offset calibration finishes inside the sensor task; store its result.
-void pollAccelCal() {
-  bool ok;
-  float off[3], radius, res;
-  int dirs;
-  if (!Sensors::accelCalTake(&ok, off, &radius, &res, &dirs)) return;
-  if (!ok) return;
-  for (int i = 0; i < 3; i++) g_settings.accOffset[i] = off[i];
-  g_settings.accRadius = radius;
-  g_settings.accCalibrated = true;
-  Storage::saveSettings(g_settings);
-  Serial.println("accel cal: stored");
-}
-void uiCalibrateAccel() { Sensors::startAccelCal(); }
-
-// Flash writes and the panel. While the chip writes flash it cannot fetch code or constants
-// from flash, and on the prebuilt Arduino core the PSRAM cache goes down with it, so the
-// panel's bounce-buffer refill interrupt stalls and the glass repeats stale ten-line strips:
-// banded digits and ghost text (Logan's photos and videos, 24 Oct 2026). On that core the
-// writes are deferred until the car has been still for 2 s (or the trip ends, or a checkpoint
-// is 10 min overdue), and event traces and checkpoints are held back entirely by default.
-// Env minidash-xip rebuilds the core with code and read-only data executing from PSRAM and
-// the refill interrupt IRAM-safe (CONFIG_SPIRAM_XIP_FROM_PSRAM, CONFIG_LCD_RGB_ISR_IRAM_SAFE):
-// measured on the bench 24 Oct 2026 with key Z, a flash write then stalls PSRAM access for no
-// longer than the idle jitter (1.5 to 1.8 ms, against 19 to 20 ms on the prebuilt core), so
-// that build writes at once, as the brief asks (traces saved on acceptance, checkpoint every
-// 30 s). Keys V and I toggle the two behaviours at run time for tests.
-#ifdef MINIDASH_XIP
-constexpr bool WRITES_STALL_PANEL = false;
-#else
-constexpr bool WRITES_STALL_PANEL = true;
-#endif
 volatile bool g_motionLog = false;
-volatile bool g_suppressWrites = WRITES_STALL_PANEL;    // hold back event traces and checkpoints
-volatile bool g_immediateWrites = !WRITES_STALL_PANEL;  // write at once, ignoring the still rule
-struct PendingEvent {
-  bool pending = false;
-  uint32_t tripId = 0;
-  size_t n = 0;
-  Storage::TraceSample samples[Storage::TRACE_MAX];
-};
-PendingEvent g_pendingEvents[REC_COUNT];
-bool g_checkpointDue = false;
-uint32_t g_stillSinceMs = 0;
-constexpr uint32_t STILL_MS = 2000;
-constexpr uint32_t CHECKPOINT_FORCE_MS = 10 * 60 * 1000;
 
-void eventSink(uint32_t tripId, int rec, const Storage::TraceSample *samples, size_t n) {
-  if (g_suppressWrites || rec < 0 || rec >= REC_COUNT) return;
-  PendingEvent &p = g_pendingEvents[rec];  // the latest window for a record replaces an unsaved one
-  p.pending = true;
-  p.tripId = tripId;
-  p.n = n > Storage::TRACE_MAX ? Storage::TRACE_MAX : n;
-  memcpy(p.samples, samples, p.n * sizeof(Storage::TraceSample));
-}
-
-// Write ONE queued item per call while the car is still (the caller runs every 100 ms), so a
-// burst of writes cannot spill into the first second of motion; force writes everything.
-void flushDeferredWrites(bool force) {
-  uint32_t nowMs = millis();
-  for (int i = 0; i < REC_COUNT; i++) {
-    if (!g_pendingEvents[i].pending) continue;
-    Storage::saveEvent(g_pendingEvents[i].tripId, i, g_pendingEvents[i].samples, g_pendingEvents[i].n);
-    g_pendingEvents[i].pending = false;
-    if (!force) return;
-  }
-  if (g_checkpointDue && !Demo::enabled() && !g_suppressWrites) {
-    Storage::TripSummary t;
-    {
-      VsLock lk;
-      if (lk.ok()) g_engine.summary(t, nowMs, false);
-    }
-    if (t.trip.distanceKm > 0.05f) Storage::saveActive(t);
-    g_checkpointDue = false;
-    g_lastCheckpointWriteMs = nowMs;
-    if (!force) return;
-  }
-  if (g_engine.lifetimeDirty()) Storage::saveLifetime(g_engine.lifetime());
-}
-bool uiLoadTrace(uint32_t tripId, int rec, Storage::TraceSample *out, size_t max, size_t *n) {
-  return Storage::loadEvent(tripId, rec, out, max, n);
-}
-
-void uiSetDemo(bool on) { Demo::setEnabled(on); }
+// Nothing in this file writes trips, records, traces or settings: app/persist.* owns those
+// writes on this task, and the UI callbacks below only leave it requests.
 void uiSetNight(int mode) { Sensors::setNightMode(mode); }
-void uiCalibrate() {
-  Sensors::calibrateMounting();
-  // Persist on the next settings save (the reference is taken by the sensor task shortly).
-}
-void uiResetTrip() {
-  finishTrip(false, nullptr);
-  startNewTrip();
-}
+void uiCalibrate() { Sensors::calibrateMounting(); }  // stored by Persist once the sensor task has taken it
+void uiCalibrateAccel() { Sensors::startAccelCal(); }
+void uiSettingsChanged(const Ui::UiSettings &u) { Persist::requestSettings(u.mph, u.nightMode, u.demo, u.bestField); }
 void uiResetPeaks() {
   VsLock lk;
   if (lk.ok()) {
     g_engine.resetSessionPeaks();
-    g_engine.publish(Vs::raw());
-  }
-}
-void uiClearRecords() {
-  Storage::clearLifetime();
-  VsLock lk;
-  if (lk.ok()) {
-    g_engine.setLifetime(RecordSet());
     g_engine.publish(Vs::raw());
   }
 }
@@ -269,42 +99,53 @@ void screenshot() {
 // is the write duration (tens of ms); with code executing from PSRAM it should stay near 1 ms.
 // This is the bench proxy for "does a flash write stall the panel refill" since the glass
 // itself cannot be read back.
+// Corrected 24 Nov 2026 (review finding 10): the probe used to index 32-bit words 16 KB apart
+// and so read up to 264 KB past the end of the 768,000-byte buffer. The figures taken with it
+// (1.5 ms against 20 ms, docs/test-log.md) are preliminary until repeated with this version.
 volatile uint32_t g_stallMaxUs = 0;
 volatile bool g_stallRun = false;
 void stallProbe(void *) {
   void *fb0 = nullptr, *fb1 = nullptr;
   DisplayRgb::getFrameBuffers(&fb0, &fb1);
-  volatile uint32_t *p = static_cast<volatile uint32_t *>(fb0);
+  volatile uint16_t *p = static_cast<volatile uint16_t *>(fb0);
+  const size_t pixels = (size_t)LCD_H_RES * LCD_V_RES, step = pixels / 64;
   uint32_t last = micros();
   uint32_t sink = 0;
-  while (g_stallRun) {
-    for (int i = 0; i < 64; i++) sink += p[i * 4096];  // 64 reads spread over the frame buffer
+  while (g_stallRun && p) {
+    for (size_t i = 0; i < 64; i++) sink += p[i * step];  // 64 reads spread over the frame buffer, all inside it
     uint32_t now = micros();
     if (now - last > g_stallMaxUs) g_stallMaxUs = now - last;
     last = now;
     vTaskDelay(1);
   }
   (void)sink;
+  g_stallRun = false;
   vTaskDelete(nullptr);
 }
 void stallTest() {
+  void *fb0 = nullptr, *fb1 = nullptr;
+  DisplayRgb::getFrameBuffers(&fb0, &fb1);
+  if (!fb0) {
+    Serial.println("stall test: no frame buffer, not run");
+    return;
+  }
   g_stallMaxUs = 0;
   g_stallRun = true;
-  xTaskCreatePinnedToCore(stallProbe, "stall", 3072, nullptr, 5, nullptr, 1);
+  if (xTaskCreatePinnedToCore(stallProbe, "stall", 3072, nullptr, 5, nullptr, 1) != pdPASS) {
+    g_stallRun = false;
+    Serial.println("stall test: the probe task could not start, not run");
+    return;
+  }
   delay(300);
   uint32_t idle = g_stallMaxUs;  // baseline without writes
   g_stallMaxUs = 0;
-  Storage::TraceSample tr[Storage::TRACE_MAX];
-  for (size_t i = 0; i < Storage::TRACE_MAX; i++) tr[i] = {(uint16_t)i, (int16_t)(i * 10), 0, 0, (int16_t)i};
-  uint32_t t0 = millis();
-  for (int k = 0; k < 5; k++) Storage::saveEvent(999000 + k, 0, tr, Storage::TRACE_MAX);
-  uint32_t writeMs = millis() - t0;
+  uint32_t writeMs = Persist::stallTestWrites();
   delay(100);
+  uint32_t during = g_stallMaxUs;
   g_stallRun = false;
   delay(20);
   Serial.printf("stall test: idle max gap %lu us; during 5 event writes (%lu ms total) max gap %lu us\n",
-                (unsigned long)idle, (unsigned long)writeMs, (unsigned long)g_stallMaxUs);
-  for (int k = 0; k < 5; k++) Storage::deleteEvents(999000 + k);
+                (unsigned long)idle, (unsigned long)writeMs, (unsigned long)during);
 }
 
 void handleSerial() {
@@ -316,10 +157,8 @@ void handleSerial() {
       Sensors::setBrightness(pct);
       Serial.printf("backlight %u%%\n", pct);
     } else if (ch == 'd') {  // toggles the replay and stores it, as the Settings switch does
-      Demo::setEnabled(!Demo::enabled());
-      g_settings.demo = Demo::enabled();
-      Storage::saveSettings(g_settings);
-      Serial.printf("demo %s (stored)\n", Demo::enabled() ? "on" : "off");
+      Persist::requestDemo(!Demo::enabled());  // the running trip is closed properly first
+      Serial.printf("demo %s requested\n", Demo::enabled() ? "off" : "on");
     } else if (ch == 'p') {
       screenshot();
     } else if (ch == 'i') {
@@ -347,39 +186,13 @@ void handleSerial() {
       LvLock lk;
       Ui::setPage(ch == 'D' ? Ui::PAGE_DRIVE : ch == 'R' ? Ui::PAGE_TRIP : ch == 'Y' ? Ui::PAGE_DYNAMICS
                   : ch == 'E' ? Ui::PAGE_ENERGY : Ui::PAGE_BATTERY);
-    } else if (ch == 'W') {
-      // Storage self-test: write the current session as a demo-flagged trip file and an event
-      // trace, read both back, report. Demo-flagged files never count in Today or All time.
-      Storage::TripSummary t;
-      {
-        VsLock lk;
-        if (lk.ok()) g_engine.summary(t, millis(), true);
-      }
-      t.closed = true;
-      t.id = 900000 + (millis() / 1000) % 1000;  // test ids, out of the real sequence
-      bool w = Storage::saveTrip(t);
-      Storage::TraceSample tr[20];
-      for (int i = 0; i < 20; i++) tr[i] = {(uint16_t)i, (int16_t)(i * 50), (int16_t)(i * 10), (int16_t)(100 - i * 5), (int16_t)(i * 30)};
-      bool we = Storage::saveEvent(t.id, REC_0_60, tr, 20);
-      Storage::TripSummary back;
-      bool r = Storage::loadTrip(0, back);
-      Storage::TraceSample tb[Storage::TRACE_MAX];
-      size_t n = 0;
-      bool re = Storage::loadEvent(t.id, REC_0_60, tb, Storage::TRACE_MAX, &n);
-      Serial.printf("storage test: trip write %s, event write %s, trip read %s (id %lu, %.2f km, 0-60 %s %.1f s), event read %s (%u samples, last kph10 %d) | %d trips, %lu KB used\n",
-                    w ? "ok" : "FAIL", we ? "ok" : "FAIL", r ? "ok" : "FAIL", (unsigned long)back.id, back.trip.distanceKm,
-                    back.records.r[0].valid ? "valid" : "none", back.records.r[0].value, re ? "ok" : "FAIL", (unsigned)n,
-                    n ? tb[n - 1].kph10 : 0, Storage::tripCount(), (unsigned long)(Storage::fsUsedBytes() / 1024));
-      refreshStoreStats();
-    } else if (ch == 'X') {
-      // Remove the test trips written by W.
-      int before = Storage::tripCount();
-      Storage::TripSummary t;
-      for (int i = 0; Storage::loadTrip(i, t); i++) {
-        if (t.id >= 900000) { Storage::deleteEvents(t.id); char path[40]; snprintf(path, sizeof(path), "/trips/%lu.trp", (unsigned long)t.id); LittleFS.remove(path); i--; }
-      }
-      Serial.printf("storage: test trips removed (%d -> %d)\n", before, Storage::tripCount());
-      refreshStoreStats();
+    } else if (ch == 'W') {  // storage self-test: one block through the safe write path, read back, removed
+      bool ok = Storage::selfTest();
+      Serial.printf("storage test: %s | %d trips, %lu KB used, %lu faults since boot\n", ok ? "write, sync, read back and rename ok" : "FAILED",
+                    Storage::tripCount(), (unsigned long)(Storage::fsUsedBytes() / 1024), (unsigned long)Storage::faultCount());
+    } else if (ch == 'X') {  // remove the test trips older firmware's self-test left in the history
+      Serial.printf("storage: %d test trips removed\n", Storage::removeTestTrips());
+      Persist::requestStats();
     } else if (ch == 't') {
       static bool tlog = false;
       tlog = !tlog;
@@ -393,20 +206,25 @@ void handleSerial() {
     } else if (ch == 'Q') {  // dump the stored trace of the trip's 0-60 record as CSV
       static Storage::TraceSample tr[Storage::TRACE_MAX];
       size_t n = 0;
-      if (Storage::loadEvent(g_engine.tripId(), 0, tr, Storage::TRACE_MAX, &n)) {
-        Serial.printf("trace trip %lu rec 0, %u samples: t10,kph10,latMg,lonMg,kw10\n", (unsigned long)g_engine.tripId(), (unsigned)n);
+      uint32_t tripId = 0;
+      {
+        VsLock lk;
+        if (lk.ok()) tripId = g_engine.tripId();
+      }
+      if (Storage::loadEvent(tripId, 0, tr, Storage::TRACE_MAX, &n)) {
+        Serial.printf("trace trip %lu rec 0, %u samples: t10,kph10,latMg,lonMg,kw10\n", (unsigned long)tripId, (unsigned)n);
         for (size_t i = 0; i < n; i++) Serial.printf("T,%u,%d,%d,%d,%d\n", tr[i].t10, tr[i].kph10, tr[i].latMg, tr[i].lonMg, tr[i].kw10);
       } else {
         Serial.println("trace: none stored for rec 0");
       }
     } else if (ch == 'I') {
-      g_immediateWrites = !g_immediateWrites;
-      Serial.printf("immediate writes %s\n", g_immediateWrites ? "on" : "off");
+      Persist::setImmediate(!Persist::immediate());
+      Serial.printf("immediate writes %s\n", Persist::immediate() ? "on" : "off");
     } else if (ch == 'Z') {
       stallTest();
     } else if (ch == 'V') {
-      g_suppressWrites = !g_suppressWrites;
-      Serial.printf("event saves %s\n", g_suppressWrites ? "suppressed" : "enabled");
+      Persist::setSuppressed(!Persist::suppressed());
+      Serial.printf("event saves %s\n", Persist::suppressed() ? "suppressed" : "enabled");
     } else if (ch == 'e') {
       LvLock lk;
       Ui::openEvent(0);
@@ -430,6 +248,16 @@ void handleSerial() {
     } else if (ch == 'P') {  // pair with a dongle now, as the Settings button (only when none is stored)
       Obd::requestPairing();
       Serial.println(Obd::paired() ? "OBD: a dongle is already paired; F forgets it" : "OBD: pairing for 30 s");
+    } else if (ch == 'K') {  // KK within 3 s: format the trip partition. The only way it is ever formatted once it holds data.
+      static uint32_t firstK = 0;
+      if (firstK && millis() - firstK < 3000) {
+        firstK = 0;
+        Storage::formatNow();
+        Persist::requestStats();
+      } else {
+        firstK = millis();
+        Serial.println("storage: K again within 3 s formats the trip partition and erases every trip");
+      }
     } else if (ch == 'r') {
       ESP.restart();
     }
@@ -461,18 +289,18 @@ void setup() {
     LvLock lk;
     Theme::init();
     Ui::Callbacks cb;
-    cb.setDemo = uiSetDemo;
+    cb.setDemo = [](bool on) { Persist::requestDemo(on); };
     cb.setNightMode = uiSetNight;
     cb.calibrateMounting = uiCalibrate;
     cb.calibrateAccel = uiCalibrateAccel;
     cb.setObd = [](bool on) { Obd::setEnabled(on); };
     cb.forgetDongle = []() { Obd::forgetDongle(); };
     cb.pairDongle = []() { Obd::requestPairing(); };
-    cb.resetTrip = uiResetTrip;
+    cb.resetTrip = []() { Persist::requestResetTrip(); };
     cb.resetPeaks = uiResetPeaks;
-    cb.clearRecords = uiClearRecords;
-    cb.settingsChanged = saveSettings;
-    cb.loadTrace = uiLoadTrace;
+    cb.clearRecords = []() { Persist::requestClearRecords(); };
+    cb.settingsChanged = uiSettingsChanged;
+    cb.loadTrace = Persist::loadTrace;
     Ui::begin(cb, VERSION);
   }
   Serial.printf("\nmini-dash %s, built %s %s, reset reason %d (1 power-on, 3 software, 4 panic, 5 int wdt, 6 task wdt, 7 other wdt, 8 deep sleep, 9 brownout, 10 sdio, 11 usb)\n",
@@ -488,43 +316,32 @@ void setup() {
     }
   }
 
-  Serial.printf("framework: %s\n", WRITES_STALL_PANEL
-                                      ? "prebuilt core, flash writes deferred to standstills and traces held back"
-                                      : "code and constants execute from PSRAM, flash writes immediate");
+  Serial.printf("framework: %s\n", Persist::immediate() ? "code and constants execute from PSRAM, flash writes immediate"
+                                                        : "prebuilt core, flash writes deferred to standstills and traces held back");
 
   // Storage and clock, then the previous trip if a power cut left its checkpoint.
   Storage::begin();
   bool rtc = Clock::begin();
   Serial.printf("clock: RTC %s\n", rtc ? "valid" : "not set, waiting for GPS");
-  Storage::loadSettings(g_settings);
+  const Storage::Settings &st = Persist::loadSettings();
   Ui::UiSettings us;
-  us.mph = g_settings.mph;
-  us.nightMode = g_settings.nightMode;
-  us.demo = g_settings.demo;
+  us.mph = st.mph;
+  us.nightMode = st.nightMode;
+  us.demo = st.demo;
   us.obd = Storage::loadObdEnabled();
-  us.bestField = g_settings.bestField;
+  us.bestField = st.bestField;
   {
     LvLock lk;
     Ui::applySettings(us);
   }
-  if (g_settings.accCalibrated) Sensors::setAccelCal(g_settings.accOffset, g_settings.accRadius);
-  if (g_settings.calibrated) Sensors::setMountingRef(g_settings.gRef);
-  Storage::TripSummary leftover;
-  if (Storage::loadActive(leftover)) {
-    Serial.printf("storage: trip %lu ended by power loss, %.1f km, closing it\n", (unsigned long)leftover.id, leftover.trip.distanceKm);
-    finishTrip(true, &leftover);
-  }
-  Storage::pruneOrphanEvents();  // traces of demo and unsaved trips from earlier boots
-  RecordSet lifetime;
-  Storage::loadLifetime(lifetime);
-  g_engine.setLifetime(lifetime);
-  Storage::TripSummary last;
-  if (Storage::loadTrip(0, last)) g_engine.setLastTrip(last.records);
-  g_engine.setEventSink(eventSink);
+  if (st.accCalibrated) Sensors::setAccelCal(st.accOffset, st.accRadius);
+  if (st.calibrated) Sensors::setMountingRef(st.gRef);
+  // Checkpoints left by power cuts are archived here, before any task that could write exists.
+  Persist::begin(&g_engine);
 
   // Sensors and the trip engine come up behind the splash.
   Sensors::start(&g_engine);
-  Sensors::setNightMode(g_settings.nightMode);
+  Sensors::setNightMode(st.nightMode);
   {
     LvLock lk;
     Ui::setBootStatus(Sensors::gpsOk() ? "GPS acquiring" : "GPS absent", Storage::loadObdEnabled() ? "OBD scanning" : "OBD off",
@@ -532,43 +349,17 @@ void setup() {
   }
   Demo::start(&g_engine);
   Obd::start();  // its own task; Bluetooth comes up there, never in the way of the screen
-  Demo::setEnabled(g_settings.demo);  // stored; off by default, Settings turns the replay on for the bench
-  startNewTrip();
+#ifndef MINIDASH_CAPTURE
+  Demo::setEnabled(st.demo);  // stored; off by default, Settings turns the replay on for the bench
+#endif
+  Persist::startFirstTrip();
   Serial.println("keys: d demo, 1..9/0 backlight, p screenshot, n next tab, D/R/Y/E/B page, x settings, i scan, r reboot");
 }
 
 void loop() {
   handleSerial();
   uint32_t nowMs = millis();
-  // A checkpoint falls due every 30 s; it is written at the next still moment (below) so a
-  // power cut loses at most 30 s plus the time to the next stop, or 10 min on a long run.
-  if (nowMs - g_lastCheckpointMs >= Storage::CHECKPOINT_MS) {
-    g_lastCheckpointMs = nowMs;
-    g_checkpointDue = true;
-    if (g_tripStartUtc == 0 && Clock::nowUtc()) {  // the clock arrived after the trip started
-      g_tripStartUtc = Clock::nowUtc() - (nowMs / 1000);
-      VsLock lk;
-      if (lk.ok()) g_engine.startTrip(g_engine.tripId(), nowMs, g_tripStartUtc), g_engine.publish(Vs::raw());
-    }
-  }
-  // Still detection on the displayed speed, and the deferred flush.
-  {
-    static uint32_t lastStillCheck = 0;
-    if (nowMs - lastStillCheck >= 100) {
-      lastStillCheck = nowMs;
-      VehicleState vs;
-      Vs::snapshot(vs);
-      bool still = vs.disp.speedKph < 2.0f;
-      if (!still) g_stillSinceMs = 0;
-      else if (g_stillSinceMs == 0) g_stillSinceMs = nowMs;
-      bool stillLongEnough = still && g_stillSinceMs && nowMs - g_stillSinceMs >= STILL_MS;
-      // The overdue hatch applies to a real checkpoint only: after 10 min with no stop, one
-      // write while moving is the price of not losing the trip to a power cut.
-      bool overdue = g_checkpointDue && !Demo::enabled() && nowMs - g_lastCheckpointWriteMs >= CHECKPOINT_FORCE_MS;
-      if (stillLongEnough || overdue || g_immediateWrites) flushDeferredWrites(overdue);
-    }
-  }
-  pollAccelCal();
+  Persist::service(nowMs);  // every flash write for trips, records, traces and settings happens in here
   static uint32_t lastMotion = 0;
   if (g_motionLog && millis() - lastMotion >= 100) {
     lastMotion = millis();
@@ -589,12 +380,12 @@ void loop() {
     Ui::timing(&tk, &pl);
     uint32_t gm, gb, gn, ga;
     Sensors::gpsStats(&gm, &gb, &gn, &ga);
-    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B refused %lu | obd %s %.1f Hz soc %.0f %% | att tilt %.1f corr %.3f bias %.2f dps lonbias %+.3f %s%s | flash writes %lu | heap %lu psram %lu i2c %lu ms by %s\n",
+    Serial.printf("[%6lu] page %d demo %d spd %.0f G %+.2f/%+.2f kW %.1f gps %d/%d imu %.0f Hz lux %.0f %s BL %u%% | lvgl %lu frames %lu flushes, wait %lu ms, %lu timeouts, handler max %lu avg %lu ms, tick max %lu ms, plot max %lu ms, touch max %lu avg %lu ms %lu fails/%lu | gps poll max %lu ms (backlog %lu B) avg %lu ms nmea %lu B refused %lu | obd %s %.1f Hz soc %.0f %% | att tilt %.1f corr %.3f bias %.2f dps lonbias %+.3f %s%s | flash writes %lu faults %lu pending %d%s | loop stack free %u | heap %lu psram %lu i2c %lu ms by %s\n",
                   (unsigned long)(millis() / 1000), (int)Ui::page(), vs.demo, vs.disp.speedKph, vs.motion.latG,
                   vs.motion.lonG, vs.car.powerKw, vs.gps.fixType, vs.gps.sats, vs.imu.rateHz, vs.disp.lux,
                   vs.disp.night ? "night" : "day", vs.disp.backlightPct,
                   (unsigned long)LvglPort::frameCount(), (unsigned long)fl, (unsigned long)wt, (unsigned long)to,
-                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), Obd::stateName(vs.diag.obdState), vs.diag.obdHz, vs.car.socPct, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.attTrust ? "trust" : "hold", vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
+                  (unsigned long)hm, (unsigned long)ha, (unsigned long)tk, (unsigned long)pl, (unsigned long)tmx, (unsigned long)tav, (unsigned long)tf, (unsigned long)tc, (unsigned long)gm, (unsigned long)gb, (unsigned long)ga, (unsigned long)gn, (unsigned long)Sensors::gpsRefusedReads(), Obd::stateName(vs.diag.obdState), vs.diag.obdHz, vs.car.socPct, vs.diag.attTiltDeg, vs.diag.attCorrDeg, vs.diag.gyroBiasDps, vs.diag.lonBiasG, vs.diag.attTrust ? "trust" : "hold", vs.diag.attStationary ? " still" : "", (unsigned long)Storage::writeCount(), (unsigned long)Storage::faultCount(), Persist::pendingRecovery(), Storage::needsOwner() ? " STORAGE NEEDS KK" : "", (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram(),
                   (unsigned long)I2cBus::longestHoldMs(), I2cBus::longestHolder());
   }
   delay(10);

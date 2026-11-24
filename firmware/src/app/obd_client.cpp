@@ -81,7 +81,7 @@ PollItem g_items[] = {
 constexpr int ITEM_COUNT = sizeof(g_items) / sizeof(g_items[0]);
 constexpr int ITEM_VOLTS = 0, ITEM_MACHINE = 2, ITEM_WHEELS_DSC = 3, ITEM_WHEELS_NBT = 4, ITEM_PEDAL = 5;
 
-volatile bool g_enabled = true, g_forget = false, g_pairRequest = false, g_printRequest = false, g_trafficLog = false;
+volatile bool g_enabled = true, g_enabledDirty = false, g_forget = false, g_pairRequest = false, g_printRequest = false, g_trafficLog = false;
 volatile bool g_connected = false;
 volatile uint8_t g_state = Obd::Off;
 volatile uint32_t g_rxDropped = 0;
@@ -687,6 +687,10 @@ void obdTask(void *) {
     }
     // Forgetting is a storage operation and happens whether or not the radio is in use
     // (review finding 34).
+    if (g_enabledDirty) {
+      g_enabledDirty = false;
+      Storage::saveObdEnabled(g_enabled);
+    }
     if (g_forget) {
       g_forget = false;
       if (g_connected) disconnect();
@@ -890,7 +894,7 @@ void setEnabled(bool on) {
   if (g_unavailable) return;
   if (on == g_enabled) return;
   g_enabled = on;
-  Storage::saveObdEnabled(on);
+  g_enabledDirty = true;  // stored by the OBD task
 }
 bool enabled() { return g_enabled && !g_unavailable; }
 bool paired() { return bound(); }

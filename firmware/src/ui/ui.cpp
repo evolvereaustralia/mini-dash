@@ -884,7 +884,7 @@ void unitsCb(lv_event_t *e) {
 }
 void calibCb(lv_event_t *) {
   if (g_cb.calibrateMounting) g_cb.calibrateMounting();
-  setText(G.calibL, "Taken");
+  setText(G.calibL, "Saving");  // becomes Stored when the reference has reached flash (updateSettings)
 }
 void accelCalCb(lv_event_t *) {
   if (g_vs.diag.accCalState == 1) return;  // already collecting
@@ -956,7 +956,15 @@ void buildSettings(lv_obj_t *p) {
   G.about = rowValue(p, 1, 6, "");
 }
 void updateSettings() {
-  static uint8_t lastCal = 255;
+  static uint8_t lastCal = 255, lastMount = 0, lastMountFail = 0;
+  if (g_vs.diag.mountRefSaves != lastMount) {
+    lastMount = g_vs.diag.mountRefSaves;
+    setText(G.calibL, "Stored");
+  }
+  if (g_vs.diag.mountRefFails != lastMountFail) {
+    lastMountFail = g_vs.diag.mountRefFails;
+    setText(G.calibL, "Failed");
+  }
   uint8_t cal = g_vs.diag.accCalState;
   if (cal == 1) setTextF(G.accelCalL, "Turn %d/%d", g_vs.diag.accCalDirs, 10);
   else if (cal != lastCal) setText(G.accelCalL, cal == 2 ? "Done" : (cal == 3 ? "Failed" : (g_vs.diag.accCalibrated ? "Done" : "Offsets")));

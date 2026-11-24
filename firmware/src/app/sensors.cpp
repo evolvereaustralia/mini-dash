@@ -49,6 +49,10 @@ TripEngine *g_engine = nullptr;
 // tracks the real orientation (CLAUDE.md section 5).
 float g_gRef[3] = {0, 0, 1};
 bool g_calibrated = false;
+// Results the loop task collects and stores (Persist): taken under this lock so a result is
+// never read half written.
+portMUX_TYPE g_resultMux = portMUX_INITIALIZER_UNLOCKED;
+bool g_mountRefReady = false;
 volatile bool g_calibrateRequest = false;
 
 Attitude g_att;
@@ -236,8 +240,11 @@ void pollImu(uint32_t now) {
   if (g_calibrateRequest) {
     float n = sqrtf(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
     if (n > 0.5f) {
+      portENTER_CRITICAL(&g_resultMux);
       for (int i = 0; i < 3; i++) g_gRef[i] = acc[i] / n;
       g_calibrated = true;
+      g_mountRefReady = true;  // stored by the loop task; the Settings label follows the stored count
+      portEXIT_CRITICAL(&g_resultMux);
       g_att.reset(acc);
       g_fusion.reset();
     }
@@ -285,7 +292,9 @@ void pollImu(uint32_t now) {
         Serial.printf("accel cal: FAILED, %d directions (need %d with each axis seen both ways)\n", g_accelCalResult.directions,
                       AccelCal::MIN_DIRS);
       }
+      portENTER_CRITICAL(&g_resultMux);
       g_accelCalResultReady = true;
+      portEXIT_CRITICAL(&g_resultMux);
     }
   }
 
@@ -477,8 +486,20 @@ bool imuOk() { return g_imuOk; }
 bool luxOk() { return g_luxOk; }
 void calibrateMounting() { g_calibrateRequest = true; }
 bool mountingRef(float out[3]) {
+  portENTER_CRITICAL(&g_resultMux);
   for (int i = 0; i < 3; i++) out[i] = g_gRef[i];
-  return g_calibrated;
+  bool c = g_calibrated;
+  portEXIT_CRITICAL(&g_resultMux);
+  return c;
+}
+bool mountRefTake(float out[3]) {
+  portENTER_CRITICAL(&g_resultMux);
+  bool ready = g_mountRefReady;
+  g_mountRefReady = false;
+  if (ready)
+    for (int i = 0; i < 3; i++) out[i] = g_gRef[i];
+  portEXIT_CRITICAL(&g_resultMux);
+  return ready;
 }
 void setMountingRef(const float ref[3]) {
   for (int i = 0; i < 3; i++) g_gRef[i] = ref[i];
@@ -488,8 +509,11 @@ void setMountingRef(const float ref[3]) {
 
 void startAccelCal() { g_accelCalRequest = true; }
 bool accelCalTake(bool *ok, float offset[3], float *radius, float *rmsResidual, int *directions) {
-  if (!g_accelCalResultReady) return false;
+  portENTER_CRITICAL(&g_resultMux);
+  bool ready = g_accelCalResultReady;
   g_accelCalResultReady = false;
+  portEXIT_CRITICAL(&g_resultMux);
+  if (!ready) return false;  // the result itself is not rewritten until the next calibration is started
   *ok = g_accelCalResultOk;
   for (int i = 0; i < 3; i++) offset[i] = g_accelCalResult.offset[i];
   *radius = g_accelCalResult.radius;

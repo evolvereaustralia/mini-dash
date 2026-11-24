@@ -60,22 +60,20 @@ void demoTask(void *) {
     uint32_t now = millis();
     bool on = g_enabled;
     if (on != g_wasEnabled) {
-      g_wasEnabled = on;
+      // The trip itself is closed and reopened by Persist on the loop task, which switches this
+      // source off before it rotates away from a replay and on only once an isolated trip is
+      // running. Nothing here resets the engine any more: that used to wipe a real trip in
+      // progress, unsaved (review finding 08).
       VsLock lk;
-      if (lk.ok()) {
+      if (!lk.ok()) continue;  // the change is not lost: it is taken at the next tick
+      g_wasEnabled = on;
+      if (!on) {
+        // Leaving the demo: the car data was synthetic, so drop it.
         VehicleState &vs = Vs::raw();
-        if (g_engine) {
-          g_engine->setIsolated(on);  // demo records never reach today or lifetime
-          g_engine->reset(now);
-          g_engine->publish(vs);
-        }
-        if (!on) {
-          // Leaving the demo: the car data was synthetic, so drop it (OBD is phase 3c).
-          vs.car = CarData();
-          vs.motion = MotionData();
-          vs.disp.speedSource = SpeedSource::None;
-          vs.demo = false;
-        }
+        vs.car = CarData();
+        vs.motion = MotionData();
+        vs.disp.speedSource = SpeedSource::None;
+        vs.demo = false;
       }
       g_t = 0;
       g_prevKph = 0;
